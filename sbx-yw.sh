@@ -15,14 +15,15 @@
 #  10. 节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
 #  11. 所有交互提示增加高亮色，read 提示符内嵌选项说明
 #  12. 【终杀】select_sni() 所有 echo 加 >&2，杜绝 $() 抓取菜单污染 SNI
-#  13. 【终杀】view_links() IP 为空时强制要求手动输入，杜绝生成残缺链接
-#  14. 【终杀】get_public_ip() 改用国内无墙接口，彻底解决国内机器获取IP失败问题
+#  13. 【终杀】view_links() IP 为空强制手动输入，杜绝生成残缺链接
+#  14. 【终杀】get_public_ip() 改用国内无墙接口，彻底解决国内机器获取IP失败
+#  15. 【增强】SNI 优选加入 30+ 主流大厂域名，采用多线程并发测速 (秒出结果)
 # ============================================================================
 
 set -u
 
 # ============================================================================
-# 全局变量 (注意: 规则库必须以点开头或非.json后缀, 避免被 -C 扫描)
+# 全局变量
 # ============================================================================
 RULES_JSON="/etc/sing-box/.sb-rules.db"
 SERVERS_LIST="/etc/sing-box/sb-servers.list"
@@ -79,25 +80,16 @@ check_env() {
 # ============================================================================
 url_encode() { echo -n "$1" | jq -sRr @uri; }
 
-# 【修复】改用国内无墙接口，增加文本清洗，彻底解决获取失败问题
 get_public_ip() {
     local tmp_ip
-    # 1. ipip.net (国内直连，返回格式: "当前 IP：x.x.x.x  来自于：xx" 需正则提取)
     tmp_ip=$(curl -s --connect-timeout 3 https://myip.ipip.net 2>/dev/null | grep -oP '\d+\.\d+\.\d+\.\d+')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
-    
-    # 2. aws checkip (全球通，返回纯 IP 加换行，用 tr 去空格)
     tmp_ip=$(curl -s --connect-timeout 3 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
-
-    # 3. icanhazip (Cloudflare提供，返回纯IP加换行)
     tmp_ip=$(curl -s --connect-timeout 3 https://icanhazip.com 2>/dev/null | tr -d '[:space:]')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
-
-    # 4. ipify (备用)
     tmp_ip=$(curl -s --connect-timeout 3 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
-
     echo ""
 }
 
@@ -124,26 +116,54 @@ safe_write_rules() {
 }
 
 # ============================================================================
-# 【修复】SNI 选择 (所有 echo 加 >&2，彻底杜绝 $() 捕获菜单文字污染)
+# 【增强】SNI 选择 (30+ 主流域名并发测速，3秒内出结果)
 # ============================================================================
 select_sni() {
     echo -e "${gl_huang}--- 伪装域名 (SNI) 设置 ---${gl_bai}" >&2
     echo -e "${gl_lv}1. 使用默认伪装域名${gl_bai}" >&2
-    echo -e "${gl_lv}2. 自动优选最佳域名${gl_bai}" >&2
+    echo -e "${gl_lv}2. 自动优选最佳域名 (并发测速)${gl_bai}" >&2
     echo -e "${gl_lv}3. 手动输入域名${gl_bai}" >&2
     read -e -p "$(echo -e "${gl_cyan}请选择 (1默认 / 2优选 / 3手动): ${gl_bai}")" c
     case $c in
         1) echo "www.microsoft.com" ;;
         2)
-            echo -e "${gl_huang}[测试中]...${gl_bai}" >&2
-            local d="www.microsoft.com" t=9999
-            for i in "www.apple.com" "dl.google.com" "www.amazon.com" "www.microsoft.com"; do
-                local n
-                n=$(curl -o /dev/null -s -w '%{time_connect}' --max-time 3 -4 "https://$i" 2>/dev/null | awk '{printf "%d",$1*1000}')
-                [ -n "$n" ] && [ "$n" -lt "$t" ] && t=$n d=$i
+            echo -e "${gl_huang}[并发测速中，约需3秒]...${gl_bai}" >&2
+            
+            local domains=(
+                "aws.com" "bing.com" "snap.licdn.com" "devblogs.microsoft.com"
+                "cdn.bizibly.com" "www.apple.com" "ts1.tc.mm.bing.net"
+                "fpinit.itunes.apple.com" "go.microsoft.com" "catalog.gamepass.com"
+                "gray-config-prod.api.arc-cdn.net" "apps.mzstatic.com" "tag.demandbase.com"
+                "r.bing.com" "tag-logger.demandbase.com" "cdn-dynmedia-1.microsoft.com"
+                "services.digitaleast.mobi" "gray.video-player.arcpublishing.com"
+                "azure.microsoft.com" "beacon.gtv-pub.com" "amd.com" "www.joom.com"
+                "www.stengg.com" "www.wedgehr.com" "www.cerebrium.ai"
+                "www.nazhumi.cem" "cloudflare-ech.com" "www.microsoft.com"
+                "dl.google.com" "www.amazon.com"
+            )
+            
+            # 使用临时文件记录并发结果
+            local tmp_f="/tmp/sb_sni_test.$$"
+            > "$tmp_f"
+            
+            for d in "${domains[@]}"; do
+                (
+                    n=$(curl -o /dev/null -s -w '%{time_connect}' --max-time 2 -4 "https://$d" 2>/dev/null | awk '{printf "%d",$1*1000}')
+                    [ -n "$n" ] && echo "$n $d" >> "$tmp_f"
+                ) &
             done
-            echo -e "${gl_lv}选用: $d (${t}ms)${gl_bai}" >&2
-            echo "$d"
+            wait # 等待所有后台测速完成
+            
+            local best_d="www.microsoft.com" best_t=9999
+            while read -r line; do
+                local t=${line%% *}
+                local dom=${line#* }
+                [ "$t" -lt "$best_t" ] 2>/dev/null && best_t=$t best_d=$dom
+            done < "$tmp_f"
+            
+            rm -f "$tmp_f"
+            echo -e "${gl_lv}选用: $best_d (${best_t}ms)${gl_bai}" >&2
+            echo "$best_d"
             ;;
         3) 
             read -e -p "$(echo -e "${gl_cyan}输入域名: ${gl_bai}")" s
@@ -407,13 +427,12 @@ view_nodes() {
 }
 
 # ============================================================================
-# 【修复】查看一键导入链接 (IP 为空强制手动输入)
+# 查看一键导入链接
 # ============================================================================
 view_links() {
     > "$LINKS_FILE"
     local ip has=0
     ip=$(get_public_ip)
-    # 如果自动获取失败或格式不对，强制手动输入
     if [[ -z "$ip" ]] || ! [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         echo -e "${gl_red}自动获取公网IP失败！${gl_bai}"
         read -e -p "$(echo -e "${gl_cyan}请手动输入服务器IP: ${gl_bai}")" ip
