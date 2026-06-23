@@ -351,32 +351,41 @@ apply_config() {
 
         if [ "$type" == "vless-reality" ]; then
             if [ "$mode" == "standalone" ]; then
-                # 修复: 必须 --arg in_tag "$in_tag" 把 tag 传进 jq
+                # sing-box 1.10+ schema:
+                #   - uuid 移入 users[].uuid, flow 也在 users[]
+                #   - reality 移入 tls.reality, 必须有 handshake
+                #   - 服务器端不需要 utls
                 json=$(echo "$json" | jq \
                     --argjson p "$port" \
                     --arg in_tag "$in_tag" \
                     --arg u "$(jq -r ".[$i].uuid" "$RULES_JSON")" \
                     --arg pk "$(jq -r ".[$i].priv_key" "$RULES_JSON")" \
-                    --arg pub "$(jq -r ".[$i].pub_key" "$RULES_JSON")" \
                     --arg sid "$(jq -r ".[$i].sid" "$RULES_JSON")" \
                     --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" \
-                    --arg fp "$(jq -r ".[$i].fp" "$RULES_JSON")" \
                     '.inbounds += [{
                         "type": "vless",
                         "tag": $in_tag,
                         "listen": "::",
                         "listen_port": $p,
-                        "uuid": $u,
+                        "users": [{
+                            "name": "user",
+                            "uuid": $u,
+                            "flow": "xtls-rprx-vision"
+                        }],
                         "tls": {
                             "enabled": true,
                             "server_name": $sni,
-                            "utls": {"enabled": true, "fingerprint": $fp}
-                        },
-                        "reality": ({"enabled": true, "private_key": $pk}
-                                    + (if $sid != "" then {"short_id": [$sid]} else {} end))
+                            "reality": ({"enabled": true,
+                                         "handshake": {"server": $sni, "server_port": 443},
+                                         "private_key": $pk}
+                                        + (if $sid != "" then {"short_id": [$sid]} else {} end))
+                        }
                     }]')
             else
-                # 修复: 同时传 in_tag 和 out_tag
+                # sing-box 1.10+ outbound schema:
+                #   - uuid 仍在顶层 (正确)
+                #   - reality 移入 tls.reality
+                #   - outbound 的 short_id 是字符串, 不是数组
                 json=$(echo "$json" | jq \
                     --argjson p "$port" \
                     --arg in_tag "$in_tag" \
@@ -398,10 +407,10 @@ apply_config() {
                         "tls": {
                             "enabled": true,
                             "server_name": $sni,
-                            "utls": {"enabled": true, "fingerprint": $fp}
-                        },
-                        "reality": ({"enabled": true, "public_key": $pub}
-                                    + (if $sid != "" then {"short_id": [$sid]} else {} end))
+                            "utls": {"enabled": true, "fingerprint": $fp},
+                            "reality": ({"enabled": true, "public_key": $pub}
+                                        + (if $sid != "" then {"short_id": $sid} else {} end))
+                        }
                     }]')
                 json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" \
                     '.route.rules += [{"inbound":[$in], "outbound":$out}]')
@@ -409,6 +418,9 @@ apply_config() {
 
         elif [ "$type" == "hysteria2" ]; then
             if [ "$mode" == "standalone" ]; then
+                # sing-box 1.10+ schema:
+                #   - password 移入 users[].password
+                #   - 证书字段名: certificate_path + key_path (不是 certificates)
                 json=$(echo "$json" | jq \
                     --argjson p "$port" \
                     --arg pass "$(jq -r ".[$i].pass" "$RULES_JSON")" \
@@ -418,16 +430,16 @@ apply_config() {
                         "tag": ("in-" + ($p|tostring)),
                         "listen": "::",
                         "listen_port": $p,
-                        "password": $pass,
+                        "users": [{"name": "user", "password": $pass}],
                         "tls": {
                             "enabled": true,
                             "server_name": $sni,
-                            "certificates": [{"certificate":"/etc/sing-box/hy2.crt","key":"/etc/sing-box/hy2.key"}]
+                            "certificate_path": "/etc/sing-box/hy2.crt",
+                            "key_path": "/etc/sing-box/hy2.key"
                         }
                     }]')
             else
-                # 修复: 末尾原本缺失闭合单引号 '  —— 这是 line 3345 报错的根因
-                # 修复: 同时传 in_tag 和 out_tag
+                # HY2 outbound: password 仍在顶层 (正确)
                 json=$(echo "$json" | jq \
                     --argjson p "$port" \
                     --arg in_tag "$in_tag" \
@@ -451,6 +463,8 @@ apply_config() {
 
         elif [ "$type" == "argo" ]; then
             if [ "$mode" == "standalone" ]; then
+                # sing-box 1.10+ VLESS inbound: uuid 移入 users[]
+                # Argo + WS 不需要 flow (WS 不支持 xtls-rprx-vision)
                 json=$(echo "$json" | jq \
                     --argjson p "$port" \
                     --arg u "$(jq -r ".[$i].uuid" "$RULES_JSON")" \
@@ -460,12 +474,11 @@ apply_config() {
                         "tag": ("in-" + ($p|tostring)),
                         "listen": "::",
                         "listen_port": $p,
-                        "uuid": $u,
+                        "users": [{"name": "user", "uuid": $u}],
                         "transport": {"type":"ws","path":$path}
                     }]')
             else
-                # 修复: "tag":"in-$p" -> 用 $in_tag (经 --arg 传入)
-                # 修复: "tag":"out-$p" -> 用 $out_tag
+                # VLESS outbound: uuid 仍在顶层
                 json=$(echo "$json" | jq \
                     --argjson p "$port" \
                     --arg in_tag "$in_tag" \
@@ -487,7 +500,6 @@ apply_config() {
             fi
 
         elif [ "$type" == "direct" ]; then
-            # 修复: "tag":"in-$p" -> 用 $in_tag (经 --arg 传入)
             json=$(echo "$json" | jq \
                 --argjson p "$port" \
                 --arg in_tag "$in_tag" \
