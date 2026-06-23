@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动多协议管理脚本 (上帝模式：自带面板+一键生成客户端链接)
+# Sing-Box 全自动多协议管理脚本 (终极专家版：0卡死智能优选+数据强同步)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -43,6 +43,58 @@ check_basic_env() {
 
 url_encode() {
     echo -n "$1" | jq -sRr @uri
+}
+
+# ============================================================================
+# 🌟 终极专家版：0风险串行智能 SNI 优选器
+# ============================================================================
+
+select_sni() {
+    echo -e "\n--- 伪装域名 (SNI) 设置 ---"
+    echo -e "${gl_lv}1. 使用默认伪装域名 (www.microsoft.com)${gl_bai}"
+    echo -e "${gl_huang}2. 自动优选最佳域名（智能延迟测试）${gl_bai}"
+    echo -e "${gl_hui}3. 手动输入域名${gl_bai}"
+    read -e -p "请选择 (1/2/3): " sni_choice
+    
+    case $sni_choice in
+        1) 
+            echo "www.microsoft.com"
+            ;;
+        2)
+            echo -e "${gl_huang}[智能优选] 正在极速测试大厂域名连通性...${gl_bai}"
+            # 精选优质 SNI 候选池 (全部支持 TLS1.3 和 H2)
+            local domains=("www.microsoft.com" "www.apple.com" "dl.google.com" "www.amazon.com" "www.samsung.com")
+            local best_domain="www.microsoft.com"
+            local best_time=9999
+            
+            # 采用串行极速探测，彻底杜绝并发卡死、僵尸进程等一切风险
+            for domain in "${domains[@]}"; do
+                # 强制 IPv4 (-4) 防止 IPv6 真死，严格限制 1 秒超时
+                local time=$(curl -o /dev/null -s -w '%{time_connect}' --connect-timeout 1 --max-time 1 -4 "https://${domain}" 2>/dev/null)
+                # 转换为整数毫秒
+                time=$(echo "$time" | awk '{printf "%d", $1 * 1000}')
+                
+                if [[ -n "$time" && "$time" -gt 0 && "$time" -lt "$best_time" ]]; then
+                    best_time=$time
+                    best_domain=$domain
+                    echo -e "  ${gl_lv}✔ ${domain} 握手延迟: ${time}ms (当前最优)${gl_bai}"
+                else
+                    echo -e "  ${gl_hui}✘ ${domain} 超时或不可达${gl_bai}"
+                fi
+            done
+            
+            echo -e "${gl_lv}[优选完成] 最终选用: ${best_domain} (握手延迟: ${best_time}ms)${gl_bai}"
+            echo "$best_domain"
+            ;;
+        3)
+            read -e -p "请输入伪装域名 (如 www.yahoo.com): " custom_sni
+            [[ -z "$custom_sni" ]] && custom_sni="www.microsoft.com"
+            echo "$custom_sni"
+            ;;
+        *) 
+            echo "www.microsoft.com" 
+            ;;
+    esac
 }
 
 # ============================================================================
@@ -98,7 +150,7 @@ node_manager_menu() {
         echo -e "${gl_hui}2. 落地机管理 (仅用于外部中转)${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "3. 查看当前节点详情"
-        echo -e "${gl_kjlan}4. 📋 查看客户端一键导入链接 (v2rayN等)${gl_bai}"
+        echo -e "${gl_kjlan}4. 📋 查看客户端一键导入链接${gl_bai}"
         echo -e "${gl_red}5. 删除指定节点${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}6. 🧨 校验并应用配置 (热重载) ${gl_huang}★${gl_bai}"
@@ -123,21 +175,67 @@ node_manager_menu() {
 }
 
 # ============================================================================
-# 查看一键导入链接
+# 🌟 动态生成链接 (强同步)
 # ============================================================================
 
 view_links() {
     clear
     echo -e "${gl_kjlan}========================================${gl_bai}"
-    echo -e "${gl_kjlan}     客户端一键导入链接 (直接复制粘贴)     "
+    echo -e "${gl_kjlan}     客户端一键导入链接 (实时同步)       "
     echo -e "${gl_kjlan}========================================${gl_bai}"
-    if [ ! -s "$LINKS_FILE" ]; then
+    
+    > "$LINKS_FILE" 
+    
+    local count=$(jq 'length' "$RULES_JSON")
+    local has_links=0
+    local my_ip=$(curl -s --connect-timeout 2 ipinfo.io/ip 2>/dev/null || echo "你的服务器IP")
+    
+    for ((i=0; i<count; i++)); do
+        local mode=$(jq -r ".[$i].mode" "$RULES_JSON")
+        local type=$(jq -r ".[$i].type" "$RULES_JSON")
+        local link=""
+        
+        if [ "$mode" != "standalone" ]; then continue; fi
+        
+        case "$type" in
+            vless-reality)
+                local uuid=$(jq -r ".[$i].uuid" "$RULES_JSON")
+                local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
+                local sni=$(jq -r ".[$i].sni" "$RULES_JSON")
+                local fp=$(jq -r ".[$i].fingerprint" "$RULES_JSON")
+                local pubkey=$(jq -r ".[$i].public_key" "$RULES_JSON")
+                local short_id=$(jq -r ".[$i].short_id" "$RULES_JSON")
+                
+                link="vless://${uuid}@${my_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(url_encode "$sni")&fp=$(url_encode "$fp")&pbk=$(url_encode "$pubkey")&sid=$(url_encode "$short_id")&type=tcp#Reality-${port}"
+                ;;
+            hysteria2)
+                local pass=$(jq -r ".[$i].password" "$RULES_JSON")
+                local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
+                local sni=$(jq -r ".[$i].sni" "$RULES_JSON")
+                
+                link="hysteria2://$(url_encode "$pass")@${my_ip}:${port}?sni=$(url_encode "$sni")&insecure=1#Hy2-${port}"
+                ;;
+            argo-vless-ws)
+                local uuid=$(jq -r ".[$i].uuid" "$RULES_JSON")
+                local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
+                local path=$(jq -r ".[$i].path" "$RULES_JSON")
+                
+                link="vless://${uuid}@你的CF域名:443?encryption=none&security=tls&type=ws&host=你的CF域名&path=$(url_encode "$path")#Argo-${port}"
+                ;;
+        esac
+        
+        if [ -n "$link" ]; then
+            echo "$link" >> "$LINKS_FILE"
+            echo -e "${gl_kjlan}${link}${gl_bai}"
+            has_links=1
+        fi
+    done
+    
+    if [ "$has_links" -eq 0 ]; then
         echo -e "${gl_hui}暂无链接。请先添加【本机直接落地】模式的节点。${gl_bai}"
     else
-        echo -e "${gl_lv}$(grep -v '^$' "$LINKS_FILE")${gl_bai}"
         echo -e "\n${gl_huang}----------------------------------------${gl_bai}"
-        echo -e "${gl_hui}提示: 在 v2rayN 中，点击 服务器 -> 从剪贴板导入批量URL。${gl_bai}"
-        echo -e "${gl_hui}      手机端 (小火箭等) 直接复制链接，打开APP自动识别。${gl_bai}"
+        echo -e "${gl_hui}提示: v2rayN -> 服务器 -> 从剪贴板导入批量URL${gl_bai}"
     fi
     echo -e "${gl_kjlan}========================================${gl_bai}"
     read -rs -n 1 -p "按任意键返回..."
@@ -251,7 +349,7 @@ check_port() {
 }
 
 # ============================================================================
-# VLESS + Reality (支持全自动独立落地)
+# VLESS + Reality
 # ============================================================================
 
 add_reality() {
@@ -259,8 +357,8 @@ add_reality() {
     read -e -p "本机监听端口 (如 443): " port; check_port "$port" || return 1
     
     echo -e "\n${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
-    echo -e "${gl_lv}1. 中转模式 (转发给其他机器或本机已有面板)${gl_bai}"
-    echo -e "${gl_kjlan}2. 本机直接落地 (全自动生成，无需面板) ★小白推荐${gl_bai}"
+    echo -e "${gl_lv}1. 中转模式${gl_bai}"
+    echo -e "${gl_kjlan}2. 本机直接落地 (全自动生成) ★小白推荐${gl_bai}"
     read -e -p "请选择 (1/2): " r_mode
     
     if [ "$r_mode" == "2" ]; then
@@ -282,7 +380,8 @@ add_reality() {
             echo -e "${gl_red}❌ 生成失败，请确保系统装有 sing-box 核心后再试。${gl_bai}"; return 1
         fi
         
-        read -e -p "伪装域名 SNI (直接回车默认 www.microsoft.com): " sni; [[ -z "$sni" ]] && sni="www.microsoft.com"
+        # 调用终极版智能 SNI 选择器
+        local sni=$(select_sni)
         read -e -p "TLS 指纹 (直接回车默认 chrome): " fp; [[ -z "$fp" ]] && fp="chrome"
         read -e -p "短ID ShortId (可留空): " short_id
         
@@ -292,22 +391,7 @@ add_reality() {
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "uuid": $uuid, "private_key": $priv_key, "public_key": $pubkey, "short_id": $short_id, "sni": $sni, "fingerprint": $fp}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
            
-        local my_ip=$(curl -s --connect-timeout 2 ipinfo.io/ip || echo "你的服务器IP")
-        
-        # 生成 v2rayN 标准链接
-        local enc_sni=$(url_encode "$sni")
-        local enc_fp=$(url_encode "$fp")
-        local enc_pbk=$(url_encode "$pubkey")
-        local enc_sid=$(url_encode "$short_id")
-        local link="vless://${uuid}@${my_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${enc_sni}&fp=${enc_fp}&pbk=${enc_pbk}&sid=${enc_sid}&type=tcp#Reality-${my_ip}"
-        
-        echo -e "\n${gl_lv}✅ 节点已生成！请复制下方链接直接导入 v2rayN/小火箭:${gl_bai}"
-        echo -e "${gl_huang}==================================================${gl_bai}"
-        echo -e "${gl_kjlan}${link}${gl_bai}"
-        echo -e "${gl_huang}==================================================${gl_bai}"
-        
-        # 保存链接到文件
-        echo "$link" >> "$LINKS_FILE"
+        echo -e "${gl_lv}✅ 节点已生成！请去菜单选择【4】查看并复制一键导入链接。${gl_bai}"
         
     else
         if select_server; then
@@ -330,7 +414,7 @@ add_reality() {
         fi
         
         read -e -p "短ID (需与后端一致): " short_id
-        read -e -p "SNI: " sni; [[ -z "$sni" ]] && sni="www.microsoft.com"
+        local sni=$(select_sni)
         read -e -p "Fingerprint: " fp; [[ -z "$fp" ]] && fp="chrome"
 
         jq --arg type "vless-reality" --argjson port "$port" --arg mode "relay" \
@@ -343,7 +427,7 @@ add_reality() {
 }
 
 # ============================================================================
-# Hysteria2 (支持全自动独立落地)
+# Hysteria2
 # ============================================================================
 
 add_hysteria2() {
@@ -357,26 +441,14 @@ add_hysteria2() {
     
     if [ "$h_mode" == "2" ]; then
         local pass=$(openssl rand -base64 16)
-        read -e -p "伪装域名 SNI (如 www.bing.com): " sni; [[ -z "$sni" ]] && sni="www.bing.com"
+        local sni=$(select_sni)
         
         jq --arg type "hysteria2" --argjson port "$port" --arg mode "standalone" \
            --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "password": $pass, "sni": $sni}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
            
-        local my_ip=$(curl -s --connect-timeout 2 ipinfo.io/ip || echo "你的服务器IP")
-        
-        # 生成标准链接
-        local enc_pass=$(url_encode "$pass")
-        local enc_sni=$(url_encode "$sni")
-        local link="hysteria2://${enc_pass}@${my_ip}:${port}?sni=${enc_sni}&insecure=1#Hy2-${my_ip}"
-        
-        echo -e "\n${gl_lv}✅ Hy2 节点已生成！(注:因无证书，使用了 insecure 模式)${gl_bai}"
-        echo -e "${gl_huang}==================================================${gl_bai}"
-        echo -e "${gl_kjlan}${link}${gl_bai}"
-        echo -e "${gl_huang}==================================================${gl_bai}"
-        
-        echo "$link" >> "$LINKS_FILE"
+        echo -e "${gl_lv}✅ Hy2 节点已生成！请去菜单选择【4】查看并复制一键导入链接。${gl_bai}"
     else
         if select_server; then
             local ip="$SERVER_IP"; local bport="$SERVER_PORT"
@@ -386,7 +458,7 @@ add_hysteria2() {
             if ! [[ "$bport" =~ ^[0-9]+$ ]] || [ "$bport" -lt 1 ] || [ "$bport" -gt 65535 ]; then return 1; fi
         fi
         read -e -p "密码: " pass; [[ -z "$pass" ]] && return 1
-        read -e -p "SNI: " sni; [[ -z "$sni" ]] && sni="www.bing.com"
+        local sni=$(select_sni)
 
         jq --arg type "hysteria2" --argjson port "$port" --arg mode "relay" --arg ip "$ip" --argjson bport "$bport" \
            --arg pass "$pass" --arg sni "$sni" \
@@ -397,7 +469,7 @@ add_hysteria2() {
 }
 
 # ============================================================================
-# Argo + VLESS + WS (支持全自动独立落地)
+# Argo + VLESS + WS
 # ============================================================================
 
 add_argo_vless_ws() {
@@ -418,17 +490,7 @@ add_argo_vless_ws() {
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "uuid": $uuid, "path": $path}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
            
-        # 注意：Argo 的 IP 需要用户自己替换为 Cloudflare 分配的临时域名或优选域名
-        local link="vless://${uuid}@你的CF域名:443?encryption=none&security=tls&type=ws&host=你的CF域名&path=$(url_encode "$path")#Argo-WS"
-        
-        echo -e "\n${gl_lv}✅ Argo 后端已生成！${gl_bai}"
-        echo -e "${gl_red}⚠️  请先在 Cloudflare 中开启 Argo 隧道指向 127.0.0.1:${port}${gl_bai}"
-        echo -e "${gl_huang}==================================================${gl_bai}"
-        echo -e "${gl_hui}请将下方链接中的【你的CF域名】替换为 Argo 分配的域名后再导入:${gl_bai}"
-        echo -e "${gl_kjlan}${link}${gl_bai}"
-        echo -e "${gl_huang}==================================================${gl_bai}"
-        
-        echo "$link" >> "$LINKS_FILE"
+        echo -e "${gl_lv}✅ Argo 后端已生成！请去菜单选择【4】查看并复制链接 (需自行修改CF域名)。${gl_bai}"
     else
         if select_server; then
             local ip="$SERVER_IP"; local bport="$SERVER_PORT"
@@ -478,13 +540,13 @@ view_rules() {
         case $type in
             vless-reality) 
                 info="Reality $(jq -r ".[$i].sni" "$RULES_JSON")" 
-                [ "$mode" == "standalone" ] && info+=" | PublicKey: $(jq -r ".[$i].public_key" "$RULES_JSON")"
+                [ "$mode" == "standalone" ] && info+=" | PK: $(jq -r ".[$i].public_key" "$RULES_JSON" | cut -c1-20)..."
                 ;;
             hysteria2) info="Hy2(UDP) $(jq -r ".[$i].sni" "$RULES_JSON")" 
-                [ "$mode" == "standalone" ] && info+=" | Pass: $(jq -r ".[$i].password" "$RULES_JSON")"
+                [ "$mode" == "standalone" ] && info+=" | Pass: $(jq -r ".[$i].password" "$RULES_JSON" | cut -c1-10)..."
                 ;;
             argo-vless-ws) info="Argo+WS $(jq -r ".[$i].path" "$RULES_JSON")" 
-                [ "$mode" == "standalone" ] && info+=" | UUID: $(jq -r ".[$i].uuid" "$RULES_JSON")"
+                [ "$mode" == "standalone" ] && info+=" | UUID: $(jq -r ".[$i].uuid" "$RULES_JSON" | cut -c1-10)..."
                 ;;
             *) info="未知协议" ;;
         esac
@@ -499,14 +561,14 @@ del_rule() {
     read -e -p "输入要删除的节点序号 (如 0): " idx
     if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -lt $(jq 'length' "$RULES_JSON") ]; then
         jq "del(.[$idx])" "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-        echo -e "${gl_lv}✅ 已删除${gl_bai}"
+        echo -e "${gl_lv}✅ 已删除节点，对应的客户端链接已自动失效。${gl_bai}"
     else
         echo -e "${gl_red}序号无效${gl_bai}"
     fi
 }
 
 # ============================================================================
-# 核心引擎：多协议动态 JSON 生成 (区分 Standalone 与 Relay)
+# 核心引擎：多协议动态 JSON 生成
 # ============================================================================
 
 build_json() {
