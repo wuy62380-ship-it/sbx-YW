@@ -19,8 +19,9 @@
 #  14. get_public_ip() 改用国内无墙接口
 #  15. SNI 优选加入 30+ 主流域名，多线程并发测速
 #  16. view_links() 静默写入文件后统一输出，防Web终端吞链接
-#  17. 【新增】纯转发添加时自动提取已知后端IP供选择
-#  18. 【新增】节点列表直观显示路由走向 (如: -> 1.2.3.4:443)
+#  17. 纯转发添加时自动提取已知后端IP供选择
+#  18. 节点列表直观显示路由走向 (如: -> 1.2.3.4:443)
+#  19. 【新增】按监听端口精准删除功能，无视序号变动
 # ============================================================================
 
 set -u
@@ -335,7 +336,7 @@ add_argo() {
 }
 
 # ============================================================================
-# 【增强】添加纯端口转发 (自动提取已知后端IP供选择)
+# 添加纯端口转发 (自动提取已知后端IP供选择)
 # ============================================================================
 add_direct() {
     echo -e "\n${gl_lan}--- 纯端口转发 (透明中转) 配置 ---${gl_bai}"
@@ -346,7 +347,6 @@ add_direct() {
     read -e -p "$(echo -e "${gl_cyan}节点备注名 (回车默认端口): ${gl_bai}")" name
     [ -z "$name" ] && name="Direct-$port"
     
-    # 提取所有已知后端IP (从历史配置和现有的转发记录里抓)
     local known_ips
     known_ips=$(jq -r '[.[] | select(.mode=="relay" or .type=="direct") | .ip] | unique | .[]' "$RULES_JSON" 2>/dev/null | sort -u | grep -v '^$')
     
@@ -379,7 +379,7 @@ add_direct() {
 }
 
 # ============================================================================
-# 【增强】查看节点列表 (直观显示路由走向)
+# 查看节点列表 (直观显示路由走向)
 # ============================================================================
 view_nodes() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
@@ -395,24 +395,62 @@ view_nodes() {
         if [ "$mode" == "standalone" ]; then 
             m_str="${gl_kjlan}[落地]${gl_bai}"
         else
-            # 只要有转发行为，就提取目标IP和端口
             local dip dbp
             dip=$(jq -r ".[$i].ip // empty" "$RULES_JSON")
             dbp=$(jq -r ".[$i].bp // empty" "$RULES_JSON")
-            
-            if [ "$type" == "direct" ]; then
-                m_str="${gl_huang}[转发]${gl_bai}"
-            else
-                m_str="${gl_hui}[中转]${gl_bai}"
-            fi
-            # 拼接路由走向提示
-            if [ -n "$dip" ] && [ -n "$dbp" ]; then
-                route_info=" ${gl_cyan}-> ${dip}:${dbp}${gl_bai}"
-            fi
+            if [ "$type" == "direct" ]; then m_str="${gl_huang}[转发]${gl_bai}"
+            else m_str="${gl_hui}[中转]${gl_bai}"; fi
+            if [ -n "$dip" ] && [ -n "$dbp" ]; then route_info=" ${gl_cyan}-> ${dip}:${dbp}${gl_bai}"; fi
         fi
-        
         printf "${gl_lv}[%d] %-10s 端口:%-6s %-8s %s%s${gl_bai}\n" "$i" "$name" "$port" "$m_str" "$type" "$route_info"
     done
+}
+
+# ============================================================================
+# 删除节点 (按序号)
+# ============================================================================
+del_node_inline() {
+    local count; count=$(jq 'length' "$RULES_JSON")
+    if [ "$count" -eq 0 ]; then echo -e "${gl_hui}节点列表为空${gl_bai}"; return; fi
+    view_nodes
+    echo -e "----------------------------------------"
+    read -e -p "$(echo -e "${gl_cyan}输入要删除的序号 (0-$((count-1))), 回车跳过: ${gl_bai}")" idx
+    [ -z "$idx" ] && return
+    if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -lt "$count" ]; then
+        local del_name del_type del_port
+        del_name=$(jq -r ".[$idx].name // \"未命名\"" "$RULES_JSON")
+        del_type=$(jq -r ".[$idx].type" "$RULES_JSON")
+        del_port=$(jq -r ".[$idx].port" "$RULES_JSON")
+        jq "del(.[$idx])" "$RULES_JSON" > "${RULES_JSON}.tmp" && sync && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+        echo -e "${gl_lv}✅ 已删除 [${idx}] ${del_name} (${del_type}:${del_port})${gl_bai}"
+    else echo -e "${gl_red}序号无效${gl_bai}"; fi
+}
+
+# ============================================================================
+# 【新增】精准删除节点 (按监听端口，无视序号变动)
+# ============================================================================
+del_node_by_port() {
+    read -e -p "$(echo -e "${gl_cyan}输入要删除的监听端口: ${gl_bai}")" target_port
+    [[ ! "$target_port" =~ ^[0-9]+$ ]] && echo -e "${gl_red}端口格式错误${gl_bai}" && return
+    
+    local count
+    count=$(jq --argjson p "$target_port" '[.[] | select(.port == $p)] | length' "$RULES_JSON")
+    
+    if [ "$count" -eq 0 ]; then
+        echo -e "${gl_hui}未找到监听端口 ${target_port} 的节点${gl_bai}"
+        return
+    fi
+    
+    echo -e "${gl_huang}找到以下匹配节点:${gl_bai}"
+    jq -r --argjson p "$target_port" '.[] | select(.port == $p) | "  - \(.name // "未命名") (\(.type):\(.port))"' "$RULES_JSON"
+    
+    read -e -p "$(echo -e "${gl_red}确认删除以上 ${count} 条记录? (y/n): ${gl_bai}")" c
+    if [ "$c" == "y" ]; then
+        jq --argjson p "$target_port" 'del(.[] | select(.port == $p))' "$RULES_JSON" > "${RULES_JSON}.tmp" && sync && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+        echo -e "${gl_lv}✅ 已清理端口 ${target_port}${gl_bai}"
+    else
+        echo -e "${gl_hui}已取消${gl_bai}"
+    fi
 }
 
 # ============================================================================
@@ -473,26 +511,6 @@ view_links() {
         echo -e "${gl_hui}如界面显示不全，请查看纯净文件:${gl_bai} ${gl_cyan}cat ${LINKS_FILE}${gl_bai}"
     fi
     echo -e "${gl_kjlan}========================================${gl_bai}"
-}
-
-# ============================================================================
-# 删除节点
-# ============================================================================
-del_node_inline() {
-    local count; count=$(jq 'length' "$RULES_JSON")
-    if [ "$count" -eq 0 ]; then echo -e "${gl_hui}节点列表为空${gl_bai}"; return; fi
-    view_nodes
-    echo -e "----------------------------------------"
-    read -e -p "$(echo -e "${gl_cyan}输入要删除的序号 (0-$((count-1))), 回车跳过: ${gl_bai}")" idx
-    [ -z "$idx" ] && return
-    if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -lt "$count" ]; then
-        local del_name del_type del_port
-        del_name=$(jq -r ".[$idx].name // \"未命名\"" "$RULES_JSON")
-        del_type=$(jq -r ".[$idx].type" "$RULES_JSON")
-        del_port=$(jq -r ".[$idx].port" "$RULES_JSON")
-        jq "del(.[$idx])" "$RULES_JSON" > "${RULES_JSON}.tmp" && sync && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-        echo -e "${gl_lv}✅ 已删除 [${idx}] ${del_name} (${del_type}:${del_port})${gl_bai}"
-    else echo -e "${gl_red}序号无效${gl_bai}"; fi
 }
 
 # ============================================================================
@@ -658,7 +676,7 @@ main_menu() {
         echo -e "----------------------------------------"
         echo -e "${gl_lv}1. 安装/更新核心${gl_bai}"
         echo -e "${gl_huang}2. 添加节点${gl_bai}"
-        echo -e "${gl_hui}3. 查看/删除节点${gl_bai}"
+        echo -e "${gl_hui}3. 查看/删除节点 (按序号)${gl_bai}"
         echo -e "${gl_kjlan}4. 📋 查看一键导入链接${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}5. 🧨 校验并启动服务 ★${gl_bai}"
@@ -666,11 +684,13 @@ main_menu() {
         echo -e "----------------------------------------"
         echo -e "${gl_huang}7. 📦 恢复备份配置${gl_bai}"
         echo -e "${gl_hui}8. 📜 查看服务日志${gl_bai}"
+        echo -e "----------------------------------------"
         echo -e "${gl_red}9. 🗑️  卸载 sing-box${gl_bai}"
+        echo -e "${gl_bright}10. 🔪 按端口精准删除 (无视序号)${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "${gl_bright}0. 退出${gl_bai}"
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        read -e -p "$(echo -e "${gl_cyan}请输入选择 (0-9): ${gl_bai}")" c
+        read -e -p "$(echo -e "${gl_cyan}请输入选择 (0-10): ${gl_bai}")" c
 
         case $c in
             1) install_core ;;
@@ -682,6 +702,7 @@ main_menu() {
             7) restore_backup ;;
             8) view_logs ;;
             9) uninstall_core ;;
+            10) del_node_by_port; read -rs -n 1 -p "按任意键继续..." ;;
             0|"") exit 0 ;;
             *) echo -e "${gl_red}输入无效${gl_bai}"; sleep 1 ;;
         esac
