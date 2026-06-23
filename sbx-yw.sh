@@ -12,9 +12,10 @@
 #   7. Hysteria2 增加带宽参数
 #   8. 主菜单状态自动诊断 (未运行时显示报错原因)
 #   9. 端口限制解除 (仅提示, 不阻止添加)
-#   10. IP 获取多源容错
-#  11. 【新增】全局交互提示增加高亮色 (防深色终端背景看不清)
-#  12. 【新增】节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
+#  10. IP 获取多源容错
+#  11. 节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
+#  12. 【终杀】所有 echo 强制加颜色，read 提示符内嵌选项说明
+#              (彻底解决 Web终端吞掉纯文本不显示的问题)
 # ============================================================================
 
 set -u
@@ -31,7 +32,6 @@ HY2_CRT="/etc/sing-box/hy2.crt"
 HY2_KEY="/etc/sing-box/hy2.key"
 BAK_DIR="/etc/sing-box/backup"
 
-# 颜色定义: 增加亮白和高对比度颜色，确保深色背景下可见
 : "${gl_bai:=\033[0m}"
 : "${gl_lv:=\033[32m}"
 : "${gl_huang:=\033[33m}"
@@ -39,8 +39,8 @@ BAK_DIR="/etc/sing-box/backup"
 : "${gl_red:=\033[31m}"
 : "${gl_kjlan:=\033[32m}"
 : "${gl_lan:=\033[34m}"
-: "${gl_bright:=\033[97m}"    # 亮白，用于普通提示文字
-: "${gl_cyan:=\033[96m}"      # 亮青，用于输入提示符
+: "${gl_bright:=\033[97m}"
+: "${gl_cyan:=\033[96m}"
 
 # ============================================================================
 # 环境检测与初始化
@@ -64,12 +64,10 @@ check_env() {
     [ ! -f "$SERVERS_LIST" ] && touch "$SERVERS_LIST"
     [ ! -f "$LINKS_FILE" ] && touch "$LINKS_FILE"
 
-    # 兼容旧版: 如果存在旧的 json 规则库, 自动迁移
     if [ -f "/etc/sing-box/sb-relay-rules.json" ]; then
         mv "/etc/sing-box/sb-relay-rules.json" "$RULES_JSON" 2>/dev/null
     fi
 
-    # 如果规则库不存在或被污染, 初始化为空数组
     if [ ! -f "$RULES_JSON" ] || ! jq empty "$RULES_JSON" >/dev/null 2>&1; then
         echo "[]" > "$RULES_JSON"
     fi
@@ -91,7 +89,6 @@ get_sb_version() {
     sing-box version 2>/dev/null | grep -oP '\d+\.\d+' | head -1
 }
 
-# 端口提示 (不限端口, 仅警告)
 check_port_warn() {
     local port="$1"
     local has_warn=0
@@ -106,21 +103,20 @@ check_port_warn() {
     [ "$has_warn" -eq 1 ] && echo -e "${gl_hui}(不限端口, 继续添加)${gl_bai}"
 }
 
-# 安全写入 (原子 + sync)
 safe_write_rules() {
     jq . "$1" > "${RULES_JSON}.tmp" && sync && mv "${RULES_JSON}.tmp" "$RULES_JSON"
 }
 
 # ============================================================================
-# SNI 选择 (修复: 高亮所有选项防看不见)
+# SNI 选择 (终杀版: 双重保险)
 # ============================================================================
 select_sni() {
-    echo ""
-    echo -e "${gl_cyan}--- 伪装域名 (SNI) 设置 ---${gl_bai}"
-    echo -e "${gl_bright}1. 使用默认伪装域名${gl_bai}"
-    echo -e "${gl_bright}2. 自动优选最佳域名${gl_bai}"
-    echo -e "${gl_bright}3. 手动输入域名${gl_bai}"
-    read -e -p "$(echo -e "${gl_cyan}请选择 (1/2/3): ${gl_bai}")" c
+    echo -e "${gl_huang}--- 伪装域名 (SNI) 设置 ---${gl_bai}"
+    echo -e "${gl_lv}1. 使用默认伪装域名${gl_bai}"
+    echo -e "${gl_lv}2. 自动优选最佳域名${gl_bai}"
+    echo -e "${gl_lv}3. 手动输入域名${gl_bai}"
+    # 【关键】把选项写在 read 提示符里，防止上面的 echo 被垃圾终端吞掉
+    read -e -p "$(echo -e "${gl_cyan}请选择 (1默认 / 2优选 / 3手动): ${gl_bai}")" c
     case $c in
         1) echo "www.microsoft.com" ;;
         2)
@@ -185,7 +181,7 @@ add_node_menu() {
         echo -e "----------------------------------------"
         echo -e "${gl_bright}0. 返回主菜单${gl_bai}"
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        read -e -p "$(echo -e "${gl_cyan}请选择协议: ${gl_bai}")" p
+        read -e -p "$(echo -e "${gl_cyan}请选择协议 (1/2/3/4/0): ${gl_bai}")" p
         case $p in
             1) add_reality ;;
             2) add_hy2 ;;
@@ -207,14 +203,14 @@ add_reality() {
     [[ ! "$port" =~ ^[0-9]+$ ]] && echo -e "${gl_red}端口错误${gl_bai}" && return
     check_port_warn "$port"
     
-    # 【新增】节点备注名
-    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 美国落地, 回车默认为端口): ${gl_bai}")" name
+    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 美国落地, 回车默认端口): ${gl_bai}")" name
     [ -z "$name" ] && name="Reality-$port"
 
-    echo -e "\n${gl_cyan}>>> 请选择工作模式 <<<${gl_bai}"
-    echo -e "${gl_bright}1. 本机直接落地 (全自动生成) ★推荐${gl_bai}"
-    echo -e "${gl_bright}2. 中转到其他机器${gl_bai}"
-    read -e -p "$(echo -e "${gl_cyan}请选择 (1/2): ${gl_bai}")" m
+    echo -e "${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
+    echo -e "${gl_lv}1. 本机直接落地 (全自动生成) ★推荐${gl_bai}"
+    echo -e "${gl_hui}2. 中转到其他机器${gl_bai}"
+    # 【关键】选项写进 read
+    read -e -p "$(echo -e "${gl_cyan}请选择 (1落地 / 2中转): ${gl_bai}")" m
 
     if [ "$m" == "1" ]; then
         echo -e "${gl_huang}[全自动] 生成密钥和UUID...${gl_bai}"
@@ -226,7 +222,7 @@ add_reality() {
         [ -z "$pub" ] && echo -e "${gl_red}生成失败，请检查核心是否已安装${gl_bai}" && return
 
         sni=$(select_sni)
-        read -e -p "$(echo -e "${gl_cyan}TLS 指纹 (直接回车默认 chrome): ${gl_bai}")" fp; [ -z "$fp" ] && fp="chrome"
+        read -e -p "$(echo -e "${gl_cyan}TLS 指纹 (回车默认chrome): ${gl_bai}")" fp; [ -z "$fp" ] && fp="chrome"
         read -e -p "$(echo -e "${gl_cyan}短ID ShortId (可留空): ${gl_bai}")" sid
 
         jq -n --argjson p "$port" --arg name "$name" --arg u "$uuid" --arg pk "$pk" --arg pub "$pub" \
@@ -251,7 +247,7 @@ add_reality() {
         fi
         read -e -p "$(echo -e "${gl_cyan}短ID: ${gl_bai}")" sid
         sni=$(select_sni)
-        read -e -p "$(echo -e "${gl_cyan}指纹 (直接回车 chrome): ${gl_bai}")" fp; [ -z "$fp" ] && fp="chrome"
+        read -e -p "$(echo -e "${gl_cyan}指纹 (回车chrome): ${gl_bai}")" fp; [ -z "$fp" ] && fp="chrome"
 
         jq -n --argjson p "$port" --arg name "$name" --arg ip "$ip" --argjson bp "$bp" --arg pub "$pub" \
               --arg sid "$sid" --arg sni "$sni" --arg fp "$fp" \
@@ -270,14 +266,13 @@ add_hy2() {
     [[ ! "$port" =~ ^[0-9]+$ ]] && echo -e "${gl_red}错误${gl_bai}" && return
     check_port_warn "$port"
     
-    # 【新增】节点备注名
-    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 香港Hy2, 回车默认为端口): ${gl_bai}")" name
+    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 香港Hy2, 回车默认端口): ${gl_bai}")" name
     [ -z "$name" ] && name="Hy2-$port"
 
-    echo -e "\n${gl_cyan}>>> 请选择工作模式 <<<${gl_bai}"
-    echo -e "${gl_bright}1. 本机直接落地 (自动生成证书) ★${gl_bai}"
-    echo -e "${gl_bright}2. 中转模式${gl_bai}"
-    read -e -p "$(echo -e "${gl_cyan}请选择 (1/2): ${gl_bai}")" m
+    echo -e "${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
+    echo -e "${gl_lv}1. 本机直接落地 (自动生成证书) ★${gl_bai}"
+    echo -e "${gl_hui}2. 中转模式${gl_bai}"
+    read -e -p "$(echo -e "${gl_cyan}请选择 (1落地 / 2中转): ${gl_bai}")" m
     local sni
     sni=$(select_sni)
 
@@ -325,14 +320,13 @@ add_argo() {
     [[ ! "$port" =~ ^[0-9]+$ ]] && echo -e "${gl_red}错误${gl_bai}" && return
     check_port_warn "$port"
     
-    # 【新增】节点备注名
-    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 免费CDN, 回车默认为端口): ${gl_bai}")" name
+    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 免费CDN, 回车默认端口): ${gl_bai}")" name
     [ -z "$name" ] && name="Argo-$port"
 
-    echo -e "\n${gl_cyan}>>> 请选择工作模式 <<<${gl_bai}"
-    echo -e "${gl_bright}1. 本机直接落地 ★${gl_bai}"
-    echo -e "${gl_bright}2. 中转模式${gl_bai}"
-    read -e -p "$(echo -e "${gl_cyan}请选择 (1/2): ${gl_bai}")" m
+    echo -e "${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
+    echo -e "${gl_lv}1. 本机直接落地 ★${gl_bai}"
+    echo -e "${gl_hui}2. 中转模式${gl_bai}"
+    read -e -p "$(echo -e "${gl_cyan}请选择 (1落地 / 2中转): ${gl_bai}")" m
     local path
     read -e -p "$(echo -e "${gl_cyan}WS路径 (如 /ray): ${gl_bai}")" path; [ -z "$path" ] && path="/ray"
 
@@ -366,8 +360,7 @@ add_direct() {
     read -e -p "$(echo -e "${gl_cyan}本机监听端口: ${gl_bai}")" port; [[ ! "$port" =~ ^[0-9]+$ ]] && return
     check_port_warn "$port"
     
-    # 【新增】节点备注名
-    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 转发SSH, 回车默认为端口): ${gl_bai}")" name
+    read -e -p "$(echo -e "${gl_cyan}节点备注名 (如: 转发SSH, 回车默认端口): ${gl_bai}")" name
     [ -z "$name" ] && name="Direct-$port"
     
     read -e -p "$(echo -e "${gl_cyan}后端目标 IP: ${gl_bai}")" ip; [ -z "$ip" ] && return
@@ -380,7 +373,7 @@ add_direct() {
 }
 
 # ============================================================================
-# 查看节点列表 (增加备注名显示)
+# 查看节点列表
 # ============================================================================
 view_nodes() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
@@ -392,17 +385,15 @@ view_nodes() {
         type=$(jq -r ".[$i].type" "$RULES_JSON")
         mode=$(jq -r ".[$i].mode" "$RULES_JSON")
         port=$(jq -r ".[$i].port" "$RULES_JSON")
-        # 兼容旧数据: 没有名字的显示"未命名"
         name=$(jq -r ".[$i].name // \"未命名\"" "$RULES_JSON")
         if [ "$mode" == "standalone" ]; then m_str="${gl_kjlan}[本机落地]${gl_bai}"
         else m_str="${gl_hui}[中转]${gl_bai}"; fi
-        # 格式: [序号] 备注名  端口  模式  类型
         printf "${gl_lv}[%d] %-12s 端口: %-6s %-14s %s${gl_bai}\n" "$i" "$name" "$port" "$m_str" "$type"
     done
 }
 
 # ============================================================================
-# 查看一键导入链接 (使用备注名作为标签)
+# 查看一键导入链接
 # ============================================================================
 view_links() {
     > "$LINKS_FILE"
@@ -475,7 +466,7 @@ view_links() {
 }
 
 # ============================================================================
-# 删除节点 (显示备注名)
+# 删除节点
 # ============================================================================
 del_node_inline() {
     local count
@@ -516,7 +507,6 @@ apply_config() {
         return
     fi
 
-    # 版本检测
     local sb_ver ver_num ver_major ver_minor
     sb_ver=$(get_sb_version)
     if [ -n "$sb_ver" ]; then
@@ -533,7 +523,6 @@ apply_config() {
         echo -e "${gl_huang}未检测到 sing-box, 仅生成配置文件${gl_bai}"
     fi
 
-    # 备份旧配置
     if [ -f "$CONF_FILE" ]; then
         local bak_name="config_$(date +%Y%m%d_%H%M%S).json"
         cp "$CONF_FILE" "${BAK_DIR}/${bak_name}"
@@ -743,7 +732,6 @@ main_menu() {
                 s="${gl_lv}运行中 ✅${gl_bai}"
             else
                 s="${gl_red}未运行${gl_bai}"
-                # 自动诊断未运行原因
                 if systemctl is-enabled sing-box --quiet 2>/dev/null; then
                     if [ -f "$CONF_FILE" ]; then
                         if ! sing-box check -c "$CONF_FILE" >/dev/null 2>&1; then
@@ -793,7 +781,7 @@ main_menu() {
         echo -e "----------------------------------------"
         echo -e "${gl_bright}0. 退出${gl_bai}"
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        read -e -p "$(echo -e "${gl_cyan}请输入选择: ${gl_bai}")" c
+        read -e -p "$(echo -e "${gl_cyan}请输入选择 (0-9): ${gl_bai}")" c
 
         case $c in
             1) install_core ;;
