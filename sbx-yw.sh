@@ -12,12 +12,11 @@
 #   7. Hysteria2 增加带宽参数
 #   8. 主菜单状态自动诊断 (未运行时显示报错原因)
 #   9. 端口限制解除 (仅提示, 不阻止添加)
-#  10. IP 获取多源容错
-#  11. 节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
-#  12. 所有交互提示增加高亮色，read 提示符内嵌选项说明
-#  13. 【终杀】select_sni() 所有 echo 加 >&2，彻底杜绝 $() 抓取菜单污染 SNI
-#  14. 【终杀】get_public_ip() 严格正则校验，杜绝返回空值或 HTML 污染
-#  15. 【终杀】view_links() IP 为空时强制要求手动输入，杜绝生成 @:2054 残缺链接
+#  10. 节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
+#  11. 所有交互提示增加高亮色，read 提示符内嵌选项说明
+#  12. 【终杀】select_sni() 所有 echo 加 >&2，杜绝 $() 抓取菜单污染 SNI
+#  13. 【终杀】view_links() IP 为空时强制要求手动输入，杜绝生成残缺链接
+#  14. 【终杀】get_public_ip() 改用国内无墙接口，彻底解决国内机器获取IP失败问题
 # ============================================================================
 
 set -u
@@ -80,15 +79,25 @@ check_env() {
 # ============================================================================
 url_encode() { echo -n "$1" | jq -sRr @uri; }
 
-# 【修复】严格正则校验，获取失败返回空字符串
+# 【修复】改用国内无墙接口，增加文本清洗，彻底解决获取失败问题
 get_public_ip() {
     local tmp_ip
-    tmp_ip=$(curl -s --connect-timeout 3 ipinfo.io/ip 2>/dev/null)
+    # 1. ipip.net (国内直连，返回格式: "当前 IP：x.x.x.x  来自于：xx" 需正则提取)
+    tmp_ip=$(curl -s --connect-timeout 3 https://myip.ipip.net 2>/dev/null | grep -oP '\d+\.\d+\.\d+\.\d+')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
-    tmp_ip=$(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null)
+    
+    # 2. aws checkip (全球通，返回纯 IP 加换行，用 tr 去空格)
+    tmp_ip=$(curl -s --connect-timeout 3 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
-    tmp_ip=$(curl -s --connect-timeout 3 ip.sb 2>/dev/null)
+
+    # 3. icanhazip (Cloudflare提供，返回纯IP加换行)
+    tmp_ip=$(curl -s --connect-timeout 3 https://icanhazip.com 2>/dev/null | tr -d '[:space:]')
     [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
+
+    # 4. ipify (备用)
+    tmp_ip=$(curl -s --connect-timeout 3 https://api.ipify.org 2>/dev/null | tr -d '[:space:]')
+    [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
+
     echo ""
 }
 
