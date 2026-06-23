@@ -14,7 +14,7 @@
 
 # --- 核心路径 ---
 RULES_JSON="/etc/sing-box/sb-relay-rules.json"
-SERVERS_LIST="/etc/sing-box/sb-servers.list" # 新增：落地机池文件
+SERVERS_LIST="/etc/sing-box/sb-servers.list"
 CONF_FILE="/etc/sing-box/config.json"
 TMP_FILE="/tmp/sb-relay-tmp.json"
 
@@ -65,7 +65,7 @@ install_singbox() {
 }
 
 # ============================================================================
-# 模块 2：节点管理 (重构版)
+# 模块 2：节点管理
 # ============================================================================
 
 node_manager_menu() {
@@ -152,7 +152,7 @@ manage_servers() {
                     local idx=1
                     while IFS=' ' read -r name ip port; do
                         [[ -z "$name" || "$name" == "#" ]] && continue
-                        echo -e "${lv}[${idx}] ${name} \t ${gl_bai}${ip}:${port}"
+                        echo -e "${gl_lv}[${idx}] ${name} \t ${gl_hui}(${ip}:${port})${gl_bai}"
                         idx=$((idx+1))
                     done < "$SERVERS_LIST"
                 fi
@@ -167,32 +167,55 @@ manage_servers() {
     done
 }
 
-# 核心黑科技：丝滑选择落地机 (返回0表示选中预设，返回1表示走手动输入)
+# ============================================================================
+# 核心黑科技：强制二选一选择落地机 (修复交互逻辑)
+# ============================================================================
+
 SERVER_IP=""
 SERVER_PORT=""
 select_server() {
-    local count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
-    if [ "$count" -gt 0 ]; then
-        echo -e "\n--- 请选择后端落地机 ---"
+    echo -e "\n----------------------------------------"
+    echo -e "${gl_huang}请选择后端落地机获取方式:${gl_bai}"
+    echo -e "----------------------------------------"
+    echo -e "${gl_lv}1. 从预设落地机列表选择${gl_bai}"
+    echo -e "${gl_hui}2. 手动输入 IP 和 端口${gl_bai}"
+    echo -e "----------------------------------------"
+    read -e -p "请选择 (1 或 2): " s_choice
+    
+    if [ "$s_choice" == "1" ]; then
+        local count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
+        if [ "$count" -eq 0 ]; then
+            echo -e "${gl_red}❌ 预设列表为空！请先在节点管理中添加落地机。${gl_bai}"
+            echo -e "${gl_huang}已自动切换为手动输入模式...${gl_bai}"
+            sleep 1
+            return 1
+        fi
+        
+        echo -e "\n--- 预设落地机列表 ---"
         local idx=1
         while IFS=' ' read -r name ip port; do
             [[ -z "$name" || "$name" == "#" ]] && continue
-            echo -e "${gl_lv}${idx}. ${name} ${gl_hui}(${ip}:${port})${gl_bai}"
+            echo -e "${gl_lv}${idx}. ${name} \t ${gl_hui}(${ip}:${port})${gl_bai}"
             idx=$((idx+1))
         done < "$SERVERS_LIST"
-        echo -e "${gl_hui}0. 手动输入 IP 和 端口${gl_bai}"
-        echo "----------------------------------------"
-        read -e -p "请选择: " s_choice
+        echo -e "----------------------------------------"
+        read -e -p "请输入序号选择落地机: " s_idx
         
-        if [[ "$s_choice" =~ ^[0-9]+$ ]] && [ "$s_choice" -ge 1 ] && [ "$s_choice" -lt "$idx" ]; then
-            SERVER_IP=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_choice}p" | awk '{print $2}')
-            SERVER_PORT=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_choice}p" | awk '{print $3}')
-            echo -e "${gl_lv}已选择: ${SERVER_IP}:${SERVER_PORT}${gl_bai}"
+        if [[ "$s_idx" =~ ^[0-9]+$ ]] && [ "$s_idx" -ge 1 ] && [ "$s_idx" -lt "$idx" ]; then
+            SERVER_IP=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_idx}p" | awk '{print $2}')
+            SERVER_PORT=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_idx}p" | awk '{print $3}')
+            echo -e "${gl_lv}✅ 已选择预设: ${SERVER_IP}:${SERVER_PORT}${gl_bai}"
             return 0
+        else
+            echo -e "${gl_red}输入无效！已自动切换为手动输入模式...${gl_bai}"
+            sleep 1
+            return 1
         fi
+    else
+        # 只有用户明确选 2 才走手动，选其他一律算作选 2 处理
+        echo -e "${gl_hui}已切换为手动输入模式...${gl_bai}"
+        return 1
     fi
-    echo -e "${gl_hui}未找到预设或选择手动，进入手动输入模式...${gl_bai}"
-    return 1
 }
 
 # ============================================================================
@@ -242,7 +265,7 @@ add_node_selector() {
 }
 
 # ============================================================================
-# 协议参数收集器 (已集成落地机池)
+# 协议参数收集器 (已集成严格的落地机二选一)
 # ============================================================================
 
 check_port() {
@@ -254,6 +277,7 @@ add_reality() {
     echo -e "\n--- VLESS + Reality 节点配置 ---"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
     
+    # 强制二选一：选预设还是手动
     if select_server; then
         local ip="$SERVER_IP"; local bport="$SERVER_PORT"
     else
@@ -433,13 +457,12 @@ build_json() {
                 ;;
                 
             direct)
-                # 纯转发使用最高效的 override
                 json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" --argjson rule "$rule" \
                     '.inbounds += [{
                         type: "direct", tag: $tag, listen:"::", listen_port: $p,
                         override_address: $rule.server, override_port: $rule.server_port
                     }]')
-                continue # 纯转发跳出路由拼接
+                continue
                 ;;
         esac
         
