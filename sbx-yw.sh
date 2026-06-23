@@ -213,7 +213,6 @@ select_server() {
         fi
         
     elif [ "$s_choice" == "3" ]; then
-        # 核心：不用落地机的本质就是 127.0.0.1 回环
         SERVER_IP="127.0.0.1"
         read -e -p "请输入本机监听的端口 (如 443): " SERVER_PORT
         if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || [ "$SERVER_PORT" -lt 1 ] || [ "$SERVER_PORT" -gt 65535 ]; then
@@ -223,7 +222,6 @@ select_server() {
         return 0
         
     else
-        # 选 2 或者乱填，都走手动
         echo -e "${gl_hui}已切换为手动输入模式...${gl_bai}"
         return 1
     fi
@@ -288,7 +286,6 @@ add_reality() {
     echo -e "\n--- VLESS + Reality 节点配置 ---"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
     
-    # 三选一
     if select_server; then
         local ip="$SERVER_IP"; local bport="$SERVER_PORT"
     else
@@ -348,7 +345,7 @@ add_hysteria2() {
     jq --arg type "hysteria2" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        --arg pass "$pass" --arg sni "${sni:-""}" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport, "password": $pass, "sni": $sni}]' \
-       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULESJSON"
        
     echo -e "${gl_lv}✅ Hysteria 2 节点添加成功${gl_bai}"
 }
@@ -390,7 +387,6 @@ view_rules() {
         local sni=$(jq -r ".[$i].sni" "$RULES_JSON")
         local path=$(jq -r ".[$i].path" "$RULES_JSON")
         
-        # 如果是 127.0.0.1，显示为“本机直连”
         if [ "$ip" == "127.0.0.1" ]; then
             local display_ip="${gl_kjlan}本机直连 (127.0.0.1)${gl_bai}:${bport}"
         else
@@ -422,7 +418,7 @@ del_rule() {
 }
 
 # ============================================================================
-# 核心黑科技：多协议动态 JSON 生成引擎
+# 核心黑科技：多协议动态 JSON 生成引擎 (已修复 EOF 错误)
 # ============================================================================
 
 build_json() {
@@ -492,7 +488,7 @@ build_json() {
 }
 
 apply_config() {
-    if [ $(jq 'length" "$RULES_JSON") -eq 0 ]; then
+    if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then
         echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; return 1
     fi
     echo -e "${gl_lv}[1/3] 正在生成多协议 JSON...${gl_bai}"
