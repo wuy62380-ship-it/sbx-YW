@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动多协议管理脚本 (终极修复版：极简纯净提示，杜绝吞字)
+# Sing-Box 全自动多协议管理脚本 (终极诊断版：杜绝假死与空值崩溃)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -50,14 +50,13 @@ is_singbox_installed() {
 }
 
 # ============================================================================
-# 🌟 极简纯净版 SNI 选择器 (彻底移除颜色，100%防吞字)
+# 🌟 极简纯净版 SNI 选择器
 # ============================================================================
 
 select_sni() {
-    # 强制清空标准输出缓冲区，防止上一条命令的残留干扰
     echo ""
     echo "--- 伪装域名 (SNI) 设置 ---"
-    echo "1. 使用默认伪装域名 (www.microsoft.com)"
+    echo "1. 使用默认伪装域名"
     echo "2. 自动优选最佳域名（智能延迟测试）"
     echo "3. 手动输入域名"
     read -e -p "请选择 (1/2/3): " sni_choice
@@ -121,7 +120,7 @@ install_singbox() {
 }
 
 # ============================================================================
-# 模块 2：节点管理 (增强服务控制)
+# 模块 2：节点管理
 # ============================================================================
 
 node_manager_menu() {
@@ -167,10 +166,12 @@ node_manager_menu() {
             6) apply_config; read -rs -n 1 -p "按任意键继续..." ;;
             7) 
                 systemctl enable sing-box --now
-                if [ $? -eq 0 ]; then
+                sleep 1
+                if systemctl is-active --quiet sing-box; then
                     echo -e "${gl_lv}✅ 服务已启动/重启，并已设为开机自启！${gl_bai}"
                 else
-                    echo -e "${gl_red}❌ 操作失败，请检查配置或运行 journalctl -u sing-box -n 20 查看日志${gl_bai}"
+                    echo -e "${gl_red}❌ 服务启动后异常退出，崩溃原因如下：${gl_bai}"
+                    journalctl -u sing-box -n 15 --no-pager
                 fi
                 read -rs -n 1 -p "按任意键继续..." ;;
             8) systemctl stop sing-box && echo -e "${gl_lv}✅ 已停止服务${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
@@ -263,10 +264,6 @@ manage_servers() {
     done
 }
 
-# ============================================================================
-# 外部中转选择器
-# ============================================================================
-
 select_server() {
     echo -e "\n--- 请选择外部后端 ---"
     echo -e "${gl_lv}1. 从预设列表选择${gl_bai}"
@@ -285,10 +282,6 @@ select_server() {
         else return 1; fi
     else return 1; fi
 }
-
-# ============================================================================
-# 丝滑添加节点入口
-# ============================================================================
 
 add_node_selector() {
     clear
@@ -320,7 +313,7 @@ check_port() {
 }
 
 # ============================================================================
-# VLESS + Reality
+# 各协议添加模块
 # ============================================================================
 
 add_reality() {
@@ -347,7 +340,6 @@ add_reality() {
         fi
         if [[ -z "$pubkey" || -z "$priv_key" ]]; then echo -e "${gl_red}❌ 生成失败${gl_bai}"; return 1; fi
         
-        # 调用纯净版选择器
         local sni=$(select_sni)
         read -e -p "TLS 指纹 (直接回车默认 chrome): " fp; [[ -z "$fp" ]] && fp="chrome"
         read -e -p "短ID ShortId (可留空): " short_id
@@ -382,14 +374,9 @@ add_reality() {
     fi
 }
 
-# ============================================================================
-# Hysteria2
-# ============================================================================
-
 add_hysteria2() {
     echo -e "\n${gl_lan}--- Hysteria 2 配置 ---${gl_bai}"
     read -e -p "本机监听端口 (UDP, 如 8443): " port; check_port "$port" || return 1
-    
     echo -e "\n${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
     echo -e "${gl_lv}1. 中转模式${gl_bai}"
     echo -e "${gl_kjlan}2. 本机直接落地 (全自动生成含自签证书) ★${gl_bai}"
@@ -398,14 +385,11 @@ add_hysteria2() {
     if [ "$h_mode" == "2" ]; then
         local pass=$(openssl rand -base64 16)
         local sni=$(select_sni)
-        
         if [ ! -f "/etc/sing-box/hy2.crt" ] || [ ! -f "/etc/sing-box/hy2.key" ]; then
             echo -e "${gl_hui}[底层] 正在自动生成自签证书...${gl_bai}"
             openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=${sni}" -days 3650 2>/dev/null
         fi
-        
-        jq --arg type "hysteria2" --argjson port "$port" --arg mode "standalone" \
-           --arg pass "$pass" --arg sni "$sni" \
+        jq --arg type "hysteria2" --argjson port "$port" --arg mode "standalone" --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "password": $pass, "sni": $sni}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
         echo -e "${gl_lv}✅ Hy2 节点已生成！(客户端需开启允许不安全)${gl_bai}"
@@ -414,18 +398,12 @@ add_hysteria2() {
         else read -e -p "后端 IP: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
         read -e -p "密码: " pass; [[ -z "$pass" ]] && return 1
         local sni=$(select_sni)
-
-        jq --arg type "hysteria2" --argjson port "$port" --arg mode "relay" --arg ip "$ip" --argjson bport "$bport" \
-           --arg pass "$pass" --arg sni "$sni" \
+        jq --arg type "hysteria2" --argjson port "$port" --arg mode "relay" --arg ip "$ip" --argjson bport "$bport" --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "server": $ip, "server_port": $bport, "password": $pass, "sni": $sni}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
         echo -e "${gl_lv}✅ 中转规则添加成功${gl_bai}"
     fi
 }
-
-# ============================================================================
-# Argo + VLESS + WS
-# ============================================================================
 
 add_argo_vless_ws() {
     echo -e "\n${gl_lan}--- Argo + VLESS + WS 配置 ---${gl_bai}"
@@ -434,7 +412,6 @@ add_argo_vless_ws() {
     echo -e "${gl_lv}1. 中转模式${gl_bai}"
     echo -e "${gl_kjlan}2. 本机直接落地 (配合 CF Argo) ★${gl_bai}"
     read -e -p "请选择 (1/2): " a_mode
-    
     if [ "$a_mode" == "2" ]; then
         local uuid=$(cat /proc/sys/kernel/random/uuid)
         read -e -p "WebSocket 路径 (如 /ray): " path; [[ -z "$path" ]] && path="/ray"
@@ -453,16 +430,11 @@ add_argo_vless_ws() {
     fi
 }
 
-# ============================================================================
-# 纯端口转发
-# ============================================================================
-
 add_direct() {
     echo -e "\n${gl_lan}--- 纯端口转发配置 ---${gl_bai}"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
     if select_server; then local ip="$SERVER_IP"; local bport="$SERVER_PORT"
     else read -e -p "后端目标 IP: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端目标端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
-
     jq --arg type "direct" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport}]' \
        "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
@@ -485,10 +457,8 @@ view_rules() {
         local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
         local mode_str=""; local info=""
         if [ "$mode" == "standalone" ]; then mode_str="${gl_kjlan}[本机落地]${gl_bai}"
-        elif [ "$type" == "direct" ]; then
-            mode_str="${gl_hui}[纯转发]${gl_bai} -> $(jq -r ".[$i].server" "$RULES_JSON"):$(jq -r ".[$i].server_port" "$RULES_JSON")"
-        else
-            mode_str="${gl_hui}[中转]${gl_bai} -> $(jq -r ".[$i].server" "$RULES_JSON"):$(jq -r ".[$i].server_port" "$RULES_JSON")"
+        elif [ "$type" == "direct" ]; then mode_str="${gl_hui}[纯转发]${gl_bai} -> $(jq -r ".[$i].server" "$RULES_JSON"):$(jq -r ".[$i].server_port" "$RULES_JSON")"
+        else mode_str="${gl_hui}[中转]${gl_bai} -> $(jq -r ".[$i].server" "$RULES_JSON"):$(jq -r ".[$i].server_port" "$RULES_JSON")"
         fi
         case $type in
             vless-reality) info="Reality $(jq -r ".[$i].sni" "$RULES_JSON")" ;;
@@ -513,7 +483,7 @@ del_rule() {
 }
 
 # ============================================================================
-# 核心引擎
+# 🌟 核心引擎：修复空ShortID致死问题
 # ============================================================================
 
 build_json() {
@@ -530,6 +500,7 @@ build_json() {
         case "$type" in
             vless-reality)
                 if [ "$mode" == "standalone" ]; then
+                    # 【修复核心】：判断 short_id 是否为空，为空则彻底移除该字段，否则 sing-box 会崩溃
                     json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
                         '.inbounds += [{
                             type: "vless", tag: $tag, listen: "::", listen_port: $rule.listen_port,
@@ -537,7 +508,7 @@ build_json() {
                             tls: {
                                 enabled: true, server_name: $rule.sni,
                                 utls: { enabled: true, fingerprint: $rule.fingerprint },
-                                reality: { enabled: true, private_key: $rule.private_key, short_id: [$rule.short_id] }
+                                reality: { enabled: true, private_key: $rule.private_key } + (if $rule.short_id != "" then {short_id: [$rule.short_id]} else {} end)
                             }
                         }]')
                 else
@@ -553,7 +524,7 @@ build_json() {
                             tls: {
                                 enabled: true, server_name: $rule.sni,
                                 utls: { enabled: true, fingerprint: $rule.fingerprint },
-                                reality: { enabled: true, public_key: $rule.public_key, short_id: $rule.short_id }
+                                reality: { enabled: true, public_key: $rule.public_key } + (if $rule.short_id != "" then {short_id: $rule.short_id} else {} end)
                             }
                         }]')
                     json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{inbound:[$in], outbound:$out}]')
@@ -608,6 +579,10 @@ build_json() {
     echo "$json" > "$TMP_FILE"
 }
 
+# ============================================================================
+# 🌟 真实状态诊断版应用配置
+# ============================================================================
+
 apply_config() {
     if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; return 1; fi
     echo -e "${gl_lv}[1/3] 正在生成 JSON...${gl_bai}"
@@ -615,14 +590,21 @@ apply_config() {
     echo -e "${gl_lv}[2/3] 安全校验中...${gl_bai}"
     local err=$(sing-box check -c "$TMP_FILE" 2>&1)
     if [ $? -ne 0 ]; then echo -e "${gl_red}❌ 校验失败！${gl_bai}\n${err}"; rm -f "$TMP_FILE"; return 1; fi
-    echo -e "${gl_lv}[3/3] 无缝热重载...${gl_bai}"
+    
+    echo -e "${gl_lv}[3/3] 重启服务并诊断状态...${gl_bai}"
     cp -f "$TMP_FILE" "$CONF_FILE" && rm -f "$TMP_FILE"
+    systemctl enable sing-box >/dev/null 2>&1
     systemctl restart sing-box
-    if [ $? -eq 0 ]; then
-        systemctl enable sing-box >/dev/null 2>&1
-        echo -e "${gl_lv}✅ 配置已重载，服务运行中！(已自动开启开机自启)${gl_bai}"
+    
+    # 强制等待一秒，让进程有时间启动或崩溃
+    sleep 1
+    
+    # 真实探测进程是否存活
+    if systemctl is-active --quiet sing-box; then
+        echo -e "${gl_lv}✅ 配置已重载，服务真实运行中！(已自动开启开机自启)${gl_bai}"
     else
-        echo -e "${gl_red}❌ 启动失败，请运行 journalctl -u sing-box -n 20 查看日志${gl_bai}"
+        echo -e "${gl_red}❌ 服务启动后崩溃！原因如下：${gl_bai}"
+        journalctl -u sing-box -n 10 --no-pager
     fi
 }
 
