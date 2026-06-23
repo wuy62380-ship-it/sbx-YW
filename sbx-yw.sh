@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动多协议管理脚本 (终极修复版：底层引擎重写)
+# Sing-Box 全自动多协议管理脚本 (终极修复版：状态诊断增强)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -43,6 +43,11 @@ check_basic_env() {
 
 url_encode() {
     echo -n "$1" | jq -sRr @uri
+}
+
+# 兼容性极强的检测 sing-box 是否存在
+is_singbox_installed() {
+    command -v sing-box >/dev/null 2>&1 || [ -f "/usr/local/bin/sing-box" ] || [ -f "/usr/bin/sing-box" ]
 }
 
 # ============================================================================
@@ -106,10 +111,10 @@ install_singbox() {
     else
         echo -e "${gl_red}无法识别系统${gl_bai}"; read -rs -n 1 -p "按任意键返回..."; return 1
     fi
-    if [ "$success" -eq 1 ] && command -v sing-box >/dev/null 2>&1; then
-        echo -e "${gl_lv}✅ 安装成功: $(sing-box version | head -n 1)${gl_bai}"
+    if [ "$success" -eq 1 ] && is_singbox_installed; then
+        echo -e "${gl_lv}✅ 安装成功！${gl_bai}"
     else
-        echo -e "${gl_red}❌ 安装失败${gl_bai}"
+        echo -e "${gl_red}❌ 安装失败，请检查网络或系统版本。${gl_bai}"
     fi
     read -rs -n 1 -p "按任意键返回主菜单..."
 }
@@ -119,7 +124,7 @@ install_singbox() {
 # ============================================================================
 
 node_manager_menu() {
-    if ! command -v sing-box >/dev/null 2>&1; then
+    if ! is_singbox_installed; then
         echo -e "${gl_red}❌ 未检测到 sing-box 核心！请先在主菜单安装。${gl_bai}"
         read -rs -n 1 -p "按任意键返回..."; return 0
     fi
@@ -132,7 +137,7 @@ node_manager_menu() {
         echo -e "${gl_kjlan}========================================${gl_bai}"
         echo -e "${gl_kjlan}          节 点 与 服 务 管 理            "
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        echo -e "核心状态: ${status}  |  规则数量: ${gl_lv}${count}${gl_bai} 个"
+        echo -e "服务状态: ${status}  |  规则数量: ${gl_lv}${count}${gl_bai} 个"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}1. 添加节点 (协议 & 工作模式)${gl_bai}"
         echo -e "${gl_hui}2. 落地机管理 (仅用于外部中转)${gl_bai}"
@@ -269,7 +274,7 @@ select_server() {
 }
 
 # ============================================================================
-# 丝滑添加节点入口 (恢复纯转发)
+# 丝滑添加节点入口
 # ============================================================================
 
 add_node_selector() {
@@ -302,7 +307,7 @@ check_port() {
 }
 
 # ============================================================================
-# VLESS + Reality (修复服务端Flow错误)
+# VLESS + Reality (已修复)
 # ============================================================================
 
 add_reality() {
@@ -364,7 +369,7 @@ add_reality() {
 }
 
 # ============================================================================
-# Hysteria2 (修复服务端无证书错误，自动生成自签证书)
+# Hysteria2 (已修复，采用最兼容证书生成)
 # ============================================================================
 
 add_hysteria2() {
@@ -380,17 +385,17 @@ add_hysteria2() {
         local pass=$(openssl rand -base64 16)
         local sni=$(select_sni)
         
-        # 底层自动生成自签证书，解决服务端必须依赖证书的问题
+        # 采用最基础的 rsa:2048，避免极简系统不支持 ecparam 导致证书生成失败
         if [ ! -f "/etc/sing-box/hy2.crt" ] || [ ! -f "/etc/sing-box/hy2.key" ]; then
             echo -e "${gl_hui}[底层] 正在自动生成自签证书...${gl_bai}"
-            openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=${sni}" -days 36500 2>/dev/null
+            openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=${sni}" -days 3650 2>/dev/null
         fi
         
         jq --arg type "hysteria2" --argjson port "$port" --arg mode "standalone" \
            --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "password": $pass, "sni": $sni}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-        echo -e "${gl_lv}✅ Hy2 节点已生成！(因使用自签证书，客户端需开启允许不安全)${gl_bai}"
+        echo -e "${gl_lv}✅ Hy2 节点已生成！(客户端需开启允许不安全)${gl_bai}"
     else
         if select_server; then local ip="$SERVER_IP"; local bport="$SERVER_PORT"
         else read -e -p "后端 IP: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
@@ -436,7 +441,7 @@ add_argo_vless_ws() {
 }
 
 # ============================================================================
-# 纯端口转发 (恢复功能)
+# 纯端口转发
 # ============================================================================
 
 add_direct() {
@@ -512,7 +517,6 @@ build_json() {
         case "$type" in
             vless-reality)
                 if [ "$mode" == "standalone" ]; then
-                    # 【修复】作为服务端，绝对不能加 flow 字段！
                     json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
                         '.inbounds += [{
                             type: "vless", tag: $tag, listen: "::", listen_port: $rule.listen_port,
@@ -524,7 +528,6 @@ build_json() {
                             }
                         }]')
                 else
-                    # 作为中转客户端出站，flow 是必须的
                     local out_tag="out-${port}"
                     json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" \
                         '.inbounds += [{type:"mixed", tag:$tag, listen:"::", listen_port:$p}]')
@@ -545,7 +548,6 @@ build_json() {
                 ;;
             hysteria2)
                 if [ "$mode" == "standalone" ]; then
-                    # 【修复】作为服务端，必须注入证书，不能用 insecure
                     json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
                         '.inbounds += [{
                             type: "hysteria2", tag: $tag, listen: "::", listen_port: $rule.listen_port,
@@ -607,19 +609,31 @@ apply_config() {
 }
 
 # ============================================================================
-# 主入口
+# 主入口 (增强状态显示)
 # ============================================================================
 
 main_menu() {
     check_basic_env
     while true; do
         clear
-        local core="${gl_red}未安装${gl_bai}"
-        command -v sing-box >/dev/null 2>&1 && core="${gl_lv}已安装 ✅${gl_bai}"
+        local core_status="${gl_red}未安装${gl_bai}"
+        local run_status="${gl_red}未运行${gl_bai}"
+        local hint=""
+        
+        if is_singbox_installed; then
+            core_status="${gl_lv}已安装 ✅${gl_bai}"
+            if systemctl is-active --quiet sing-box 2>/dev/null; then
+                run_status="${gl_lv}运行中 ✅${gl_bai}"
+            else
+                hint="${gl_hui}(若已配置节点，请进入菜单2应用配置启动服务)${gl_bai}"
+            fi
+        fi
+        
         echo -e "${gl_kjlan}========================================${gl_bai}"
         echo -e "${gl_kjlan}    Sing-Box 全自动节点管理脚本         "
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        echo -e "核心状态: ${core}"
+        echo -e "核心状态: ${core_status}"
+        echo -e "服务状态: ${run_status} ${hint}"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}1. 安装/更新 Sing-Box 核心${gl_bai}"
         echo -e "${gl_huang}2. 节点与服务管理${gl_bai}"
