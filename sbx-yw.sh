@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 多协议中转管理脚本 (支持本机直连模式)
+# Sing-Box 多协议中转管理脚本 (全自动本机直连版)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -31,8 +31,8 @@ check_basic_env() {
     fi
     mkdir -p /etc/sing-box
     [ ! -f "$RULES_JSON" ] && echo '[]' > "$RULES_JSON"
-    [ ! -f "$SERVERS_LIST" ] && touch "$SERVERS_LIST"
-}
+    [ ! -f "$SERVERS_LIST" ] && touch "$SERVER_IP"
+fi
 
 # ============================================================================
 # 模块 1：安装核心
@@ -167,18 +167,18 @@ manage_servers() {
 }
 
 # ============================================================================
-# 核心黑科技：三种模式选择器 (预设/手动/本机直连)
+# 核心黑科技：三种模式选择器 (支持自动获取本机IP直连)
 # ============================================================================
 
 SERVER_IP=""
-SERVER_PORT=""
+SERVER_PORT="-1" # -1 代表自动使用本机监听端口
 select_server() {
     echo -e "\n----------------------------------------"
     echo -e "${gl_huang}请选择后端获取方式:${gl_bai}"
     echo -e "----------------------------------------"
     echo -e "${gl_lv}1. 从预设列表选择外部落地机${gl_bai}"
     echo -e "${gl_hui}2. 手动输入外部 IP 和端口${gl_bai}"
-    echo -e "${gl_kjlan}3. 不用落地机 (本机直连 127.0.0.1)${gl_bai}"
+    echo -e "${gl_kjlan}3. 不用落地机 (自动获取本机IP直连) ${gl_huang}★自动${gl_bai}"
     echo -e "----------------------------------------"
     read -e -p "请选择 (1/2/3): " s_choice
     
@@ -212,13 +212,19 @@ select_server() {
             return 1
         fi
         
-    elif [ "$s_choice" == "3" ]; then
-        SERVER_IP="127.0.0.1"
-        read -e -p "请输入本机监听的端口 (如 443): " SERVER_PORT
-        if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || [ "$SERVER_PORT" -lt 1 ] || [ "$SERVER_PORT" -gt 65535 ]; then
-            echo -e "${gl_red}端口错误${gl_bai}"; return 1
+    elif [ "$s_choice" == "3" ] || [ "$s_choice" == "3 " ]; then
+        # 自动获取本机公网 IP
+        echo -ne "${gl_hui}正在自动获取本机公网IP(超时3秒)...${gl_bai}\r"
+        local auto_ip=$(curl -s --connect-timeout 2 --max-time 3 ipinfo.io 2>/dev/null | awk -F'"' '/ip/{print $4}' || curl -s --connect-timeout 2 --max-time 3 ifconfig.me 2>/dev/null | grep -oP 'inet (\K[\d.]+)' | awk '{print $2}' || echo "你的服务器无法访问外网")
+        
+        if [ -z "$auto_ip" ] || [ "$auto_ip" == "你的服务器无法访问外网" ]; then
+            echo -e "\n${gl_red}❌ 无法获取外网IP！已自动切换为手动输入模式...${gl_bai}"
+            return 1
         fi
-        echo -e "${gl_kjlan}✅ 已设置为本机直连模式 (127.0.0.1:${SERVER_PORT})${gl_bai}"
+        
+        SERVER_IP="$auto_ip"
+        SERVER_PORT="-1" # 标记为自动模式，底层会自动将后端端口替换为本机监听端口
+        echo -e "${gl_kjlan}✅ 已获取本机IP: ${SERVER_IP}，将直接指向本机${gl_bai}"
         return 0
         
     else
@@ -274,7 +280,7 @@ add_node_selector() {
 }
 
 # ============================================================================
-# 协议参数收集器 (已集成三种选择模式)
+# 协议参数收集器 (底层已支持 -1 自动替换为监听端口)
 # ============================================================================
 
 check_port() {
@@ -301,7 +307,7 @@ add_reality() {
     jq --arg type "vless-reality" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        --arg pubkey "$pubkey" --arg short_id "${short_id:-""}" --arg sni "$sni" --arg fp "$fp" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport, "public_key": $pubkey, "short_id": $short_id, "sni": $sni, "fingerprint": $fp}]' \
-       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+       "$RULES_JSON" > "${RULES_JSON".tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
        
     echo -e "${gl_lv}✅ VLESS + Reality 节点添加成功${gl_bai}"
 }
@@ -322,7 +328,7 @@ add_argo_vless_ws() {
 
     jq --arg type "argo-vless-ws" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" --arg path "$path" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport, "path": $path}]' \
-       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+       "$RULES_JSON" > "${RULES_JSON".tmp" && mv "${RULES_JSON".tmp" "$RULES_JSON"
        
     echo -e "${gl_lv}✅ Argo + VLESS + WS 节点添加成功${gl_bai}"
 }
@@ -345,7 +351,7 @@ add_hysteria2() {
     jq --arg type "hysteria2" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        --arg pass "$pass" --arg sni "${sni:-""}" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport, "password": $pass, "sni": $sni}]' \
-       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULESJSON"
+       "$RULES_JSON" > "${RULES_JSON".tmp" && mv "${RULES_JSON".tmp" "$RULES_JSON"
        
     echo -e "${gl_lv}✅ Hysteria 2 节点添加成功${gl_bai}"
 }
@@ -363,7 +369,7 @@ add_direct() {
 
     jq --arg type "direct" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport}]' \
-       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+       "$RULES_JSON" > "${RULES_JSON".tmp" && mv "${RULES_JSON".tmp" "$RULES_JSON"
        
     echo -e "${gl_lv}✅ 纯转发节点添加成功${gl_bai}"
 }
@@ -387,8 +393,11 @@ view_rules() {
         local sni=$(jq -r ".[$i].sni" "$RULES_JSON")
         local path=$(jq -r ".[$i].path" "$RULES_JSON")
         
-        if [ "$ip" == "127.0.0.1" ]; then
-            local display_ip="${gl_kjlan}本机直连 (127.0.0.1)${gl_bai}:${bport}"
+        # 如果是自动获取的IP，显示为“本机直连 (你的公网IP)”
+        if [ "$ip" != "127.0.0.1" ] && [ "$bport" == "-1" ]; then
+            local display_ip="${gl_kjlan}本机直连 (${ip})${gl_bai}"
+        elif [ "$ip" == "127.0.0.1" ] && [ "$bport" == "-1" ]; then
+            local display_ip="${gl_kjlan}本机回环 (127.0.0.1)${gl_bai}"
         else
             local display_ip="${ip}:${bport}"
         fi
@@ -410,7 +419,7 @@ del_rule() {
     echo "----------------------------------------"
     read -e -p "输入要删除的节点序号 (如 0): " idx
     if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -lt $(jq 'length' "$RULES_JSON") ]; then
-        jq "del(.[$idx])" "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+        jq "del(.[$idx])" "$RULES_JSON" > "${RULES_JSON".tmp" && mv "${RULES_JSON".tmp" "$RULES_JSON"
         echo -e "${gl_lv}✅ 已删除序号 $idx 的节点${gl_bai}"
     else
         echo -e "${gl_red}序号无效${gl_bai}"
@@ -418,7 +427,7 @@ del_rule() {
 }
 
 # ============================================================================
-# 核心黑科技：多协议动态 JSON 生成引擎 (已修复 EOF 错误)
+# 核心黑科技：多协议动态 JSON 生成引擎 (支持 -1 自动替换为本机端口)
 # ============================================================================
 
 build_json() {
@@ -436,9 +445,12 @@ build_json() {
             vless-reality)
                 json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" \
                     '.inbounds += [{type:"mixed", tag:$tag, listen:"::", listen_port:$p}]')
-                json=$(echo "$json" | jq --arg tag "$out_tag" --argjson rule "$rule" \
+                # 【关键逻辑】如果 bport 是 -1，则自动替换为当前监听端口，实现真正的本机直连
+                json=$(echo "$json" | jq --arg tag "$out_tag" --argjson p "$port" --argjson rule "$rule" \
                     '.outbounds += [{
-                        type: "vless", tag: $tag, server: $rule.server, server_port: $rule.server_port,
+                        type: "vless", tag: $tag, 
+                        server: (if $rule.server == "-1" then $p else $rule.server end), 
+                        server_port: (if $rule.server_port == "-1" then $p else $rule.server_port end),
                         uuid: "00000000-0000-0000-0000-000000000000", flow: "xtls-rprx-vision",
                         tls: {
                             enabled: true, server_name: $rule.sni,
@@ -451,9 +463,11 @@ build_json() {
             argo-vless-ws)
                 json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" \
                     '.inbounds += [{type:"mixed", tag:$tag, listen:"::", listen_port:$p}]')
-                json=$(echo "$json" | jq --arg tag "$out_tag" --argjson rule "$rule" \
+                json=$(echo "$json" | jq --arg tag "$out_tag" --argjson p "$port" --argjson rule "$rule" \
                     '.outbounds += [{
-                        type: "vless", tag: $tag, server: $rule.server, server_port: $rule.server_port,
+                        type: "vless", tag: $tag, 
+                        server: (if $rule.server == "-1" then $p else $rule.server end), 
+                        server_port: (if $rule.server_port == "-1" then $p else $rule.server_port end),
                         uuid: "00000000-0000-0000-0000-000000000000",
                         transport: { type: "ws", path: $rule.path }
                     }]')
@@ -462,19 +476,23 @@ build_json() {
             hysteria2)
                 json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" \
                     '.inbounds += [{type:"mixed", tag:$tag, listen:"::", listen_port:$p}]')
-                json=$(echo "$json" | jq --arg tag "$out_tag" --argjson rule "$rule" \
+                json=$(echo "$json" | jq --arg tag "$out_tag" --argjson p "$port" --argjson rule "$rule" \
                     '.outbounds += [{
-                        type: "hysteria2", tag: $tag, server: $rule.server, server_port: $rule.server_port,
+                        type: "hysteria2", tag: $tag, 
+                        server: (if $rule.server == "-1" then $p else $rule.server end), 
+                        server_port: (if $rule.server_port == "-1" then $p else $rule.server_port end),
                         password: $rule.password,
                         tls: { enabled: true, server_name: $rule.sni, insecure: true }
                     }]')
                 ;;
                 
             direct)
+                # 纯转发：如果是自动直连模式，把目标地址也替换为本机回环地址
                 json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" --argjson rule "$rule" \
                     '.inbounds += [{
                         type: "direct", tag: $tag, listen:"::", listen_port: $p,
-                        override_address: $rule.server, override_port: $rule.server_port
+                        override_address: (if $rule.server == "-1" then "127.0.0.1" else $rule.server end), 
+                        override_port: (if $rule.server_port == "-1" then $p else $rule.server_port end)
                     }]')
                 continue
                 ;;
@@ -488,7 +506,7 @@ build_json() {
 }
 
 apply_config() {
-    if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then
+    if [ $(jq 'length' "$RULESJSON") -eq 0 ]; then
         echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; return 1
     fi
     echo -e "${gl_lv}[1/3] 正在生成多协议 JSON...${gl_bai}"
