@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动多协议管理脚本 (终极修复版：完美自启与服务管理)
+# Sing-Box 全自动多协议管理脚本 (终极修复版：极简纯净提示，杜绝吞字)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -50,14 +50,16 @@ is_singbox_installed() {
 }
 
 # ============================================================================
-# 🌟 终端绝对兼容版 SNI 选择器
+# 🌟 极简纯净版 SNI 选择器 (彻底移除颜色，100%防吞字)
 # ============================================================================
 
 select_sni() {
-    printf "\n--- 伪装域名 (SNI) 设置 ---\n"
-    printf "\033[32m1.\033[0m 使用默认伪装域名\n"
-    printf "\033[33m2.\033[0m 自动优选最佳域名（智能延迟测试）\n"
-    printf "\033[90m3.\033[0m 手动输入域名\n"
+    # 强制清空标准输出缓冲区，防止上一条命令的残留干扰
+    echo ""
+    echo "--- 伪装域名 (SNI) 设置 ---"
+    echo "1. 使用默认伪装域名 (www.microsoft.com)"
+    echo "2. 自动优选最佳域名（智能延迟测试）"
+    echo "3. 手动输入域名"
     read -e -p "请选择 (1/2/3): " sni_choice
     
     case $sni_choice in
@@ -133,7 +135,6 @@ node_manager_menu() {
         local status="${gl_red}未运行${gl_bai}"; systemctl is-active --quiet sing-box && status="${gl_lv}运行中 ✅${gl_bai}"
         local count=$(jq 'length' "$RULES_JSON")
         
-        # 检测开机自启状态
         local boot_status="${gl_red}未启用${gl_bai}"
         systemctl is-enabled sing-box --quiet 2>/dev/null && boot_status="${gl_lv}已启用 ✅${gl_bai}"
         
@@ -165,7 +166,6 @@ node_manager_menu() {
             5) del_rule; read -rs -n 1 -p "按任意键继续..." ;;
             6) apply_config; read -rs -n 1 -p "按任意键继续..." ;;
             7) 
-                # enable --now 是个神级命令，同时设置开机自启并立即启动
                 systemctl enable sing-box --now
                 if [ $? -eq 0 ]; then
                     echo -e "${gl_lv}✅ 服务已启动/重启，并已设为开机自启！${gl_bai}"
@@ -347,6 +347,7 @@ add_reality() {
         fi
         if [[ -z "$pubkey" || -z "$priv_key" ]]; then echo -e "${gl_red}❌ 生成失败${gl_bai}"; return 1; fi
         
+        # 调用纯净版选择器
         local sni=$(select_sni)
         read -e -p "TLS 指纹 (直接回车默认 chrome): " fp; [[ -z "$fp" ]] && fp="chrome"
         read -e -p "短ID ShortId (可留空): " short_id
@@ -618,7 +619,6 @@ apply_config() {
     cp -f "$TMP_FILE" "$CONF_FILE" && rm -f "$TMP_FILE"
     systemctl restart sing-box
     if [ $? -eq 0 ]; then
-        # 应用配置成功后，静默开启开机自启，防止用户忘记点菜单7
         systemctl enable sing-box >/dev/null 2>&1
         echo -e "${gl_lv}✅ 配置已重载，服务运行中！(已自动开启开机自启)${gl_bai}"
     else
