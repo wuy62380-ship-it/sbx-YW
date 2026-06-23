@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动多协议管理脚本 (终极修复版：状态诊断增强)
+# Sing-Box 全自动多协议管理脚本 (终极修复版：完美自启与服务管理)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -45,20 +45,19 @@ url_encode() {
     echo -n "$1" | jq -sRr @uri
 }
 
-# 兼容性极强的检测 sing-box 是否存在
 is_singbox_installed() {
     command -v sing-box >/dev/null 2>&1 || [ -f "/usr/local/bin/sing-box" ] || [ -f "/usr/bin/sing-box" ]
 }
 
 # ============================================================================
-# 🌟 0风险串行智能 SNI 优选器
+# 🌟 终端绝对兼容版 SNI 选择器
 # ============================================================================
 
 select_sni() {
-    echo -e "\n--- 伪装域名 (SNI) 设置 ---"
-    echo -e "${gl_lv}1. 使用默认伪装域名${gl_bai}"
-    echo -e "${gl_huang}2. 自动优选最佳域名（智能延迟测试）${gl_bai}"
-    echo -e "${gl_hui}3. 手动输入域名${gl_bai}"
+    printf "\n--- 伪装域名 (SNI) 设置 ---\n"
+    printf "\033[32m1.\033[0m 使用默认伪装域名\n"
+    printf "\033[33m2.\033[0m 自动优选最佳域名（智能延迟测试）\n"
+    printf "\033[90m3.\033[0m 手动输入域名\n"
     read -e -p "请选择 (1/2/3): " sni_choice
     
     case $sni_choice in
@@ -120,7 +119,7 @@ install_singbox() {
 }
 
 # ============================================================================
-# 模块 2：节点管理
+# 模块 2：节点管理 (增强服务控制)
 # ============================================================================
 
 node_manager_menu() {
@@ -134,10 +133,14 @@ node_manager_menu() {
         local status="${gl_red}未运行${gl_bai}"; systemctl is-active --quiet sing-box && status="${gl_lv}运行中 ✅${gl_bai}"
         local count=$(jq 'length' "$RULES_JSON")
         
+        # 检测开机自启状态
+        local boot_status="${gl_red}未启用${gl_bai}"
+        systemctl is-enabled sing-box --quiet 2>/dev/null && boot_status="${gl_lv}已启用 ✅${gl_bai}"
+        
         echo -e "${gl_kjlan}========================================${gl_bai}"
         echo -e "${gl_kjlan}          节 点 与 服 务 管 理            "
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        echo -e "服务状态: ${status}  |  规则数量: ${gl_lv}${count}${gl_bai} 个"
+        echo -e "服务状态: ${status}  |  开机自启: ${boot_status}  |  规则数量: ${gl_lv}${count}${gl_bai} 个"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}1. 添加节点 (协议 & 工作模式)${gl_bai}"
         echo -e "${gl_hui}2. 落地机管理 (仅用于外部中转)${gl_bai}"
@@ -147,7 +150,8 @@ node_manager_menu() {
         echo -e "${gl_red}5. 删除指定节点${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}6. 🧨 校验并应用配置 (热重载) ${gl_huang}★${gl_bai}"
-        echo -e "${gl_hui}7. 停止服务${gl_bai}"
+        echo -e "${gl_kjlan}7. 🟢 启动/重启服务 (自动开启开机自启)${gl_bai}"
+        echo -e "${gl_hui}8. 🔴 停止服务${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "0. 返回主菜单"
         echo -e "${gl_kjlan}========================================${gl_bai}"
@@ -160,7 +164,16 @@ node_manager_menu() {
             4) view_links ;;
             5) del_rule; read -rs -n 1 -p "按任意键继续..." ;;
             6) apply_config; read -rs -n 1 -p "按任意键继续..." ;;
-            7) systemctl stop sing-box && echo -e "${gl_lv}已停止${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
+            7) 
+                # enable --now 是个神级命令，同时设置开机自启并立即启动
+                systemctl enable sing-box --now
+                if [ $? -eq 0 ]; then
+                    echo -e "${gl_lv}✅ 服务已启动/重启，并已设为开机自启！${gl_bai}"
+                else
+                    echo -e "${gl_red}❌ 操作失败，请检查配置或运行 journalctl -u sing-box -n 20 查看日志${gl_bai}"
+                fi
+                read -rs -n 1 -p "按任意键继续..." ;;
+            8) systemctl stop sing-box && echo -e "${gl_lv}✅ 已停止服务${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
             0|"") break ;;
             *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
         esac
@@ -307,7 +320,7 @@ check_port() {
 }
 
 # ============================================================================
-# VLESS + Reality (已修复)
+# VLESS + Reality
 # ============================================================================
 
 add_reality() {
@@ -369,7 +382,7 @@ add_reality() {
 }
 
 # ============================================================================
-# Hysteria2 (已修复，采用最兼容证书生成)
+# Hysteria2
 # ============================================================================
 
 add_hysteria2() {
@@ -385,7 +398,6 @@ add_hysteria2() {
         local pass=$(openssl rand -base64 16)
         local sni=$(select_sni)
         
-        # 采用最基础的 rsa:2048，避免极简系统不支持 ecparam 导致证书生成失败
         if [ ! -f "/etc/sing-box/hy2.crt" ] || [ ! -f "/etc/sing-box/hy2.key" ]; then
             echo -e "${gl_hui}[底层] 正在自动生成自签证书...${gl_bai}"
             openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=${sni}" -days 3650 2>/dev/null
@@ -500,7 +512,7 @@ del_rule() {
 }
 
 # ============================================================================
-# 核心引擎：彻底修复的 JSON 生成器
+# 核心引擎
 # ============================================================================
 
 build_json() {
@@ -605,11 +617,17 @@ apply_config() {
     echo -e "${gl_lv}[3/3] 无缝热重载...${gl_bai}"
     cp -f "$TMP_FILE" "$CONF_FILE" && rm -f "$TMP_FILE"
     systemctl restart sing-box
-    [ $? -eq 0 ] && echo -e "${gl_lv}✅ 配置已重载，服务运行中！${gl_bai}" || echo -e "${gl_red}❌ 启动失败${gl_bai}"
+    if [ $? -eq 0 ]; then
+        # 应用配置成功后，静默开启开机自启，防止用户忘记点菜单7
+        systemctl enable sing-box >/dev/null 2>&1
+        echo -e "${gl_lv}✅ 配置已重载，服务运行中！(已自动开启开机自启)${gl_bai}"
+    else
+        echo -e "${gl_red}❌ 启动失败，请运行 journalctl -u sing-box -n 20 查看日志${gl_bai}"
+    fi
 }
 
 # ============================================================================
-# 主入口 (增强状态显示)
+# 主入口
 # ============================================================================
 
 main_menu() {
@@ -625,7 +643,7 @@ main_menu() {
             if systemctl is-active --quiet sing-box 2>/dev/null; then
                 run_status="${gl_lv}运行中 ✅${gl_bai}"
             else
-                hint="${gl_hui}(若已配置节点，请进入菜单2应用配置启动服务)${gl_bai}"
+                hint="${gl_hui}(请进入菜单2添加节点并应用配置)${gl_bai}"
             fi
         fi
         
