@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动多协议管理脚本 (终极专家版：0卡死智能优选+数据强同步)
+# Sing-Box 全自动多协议管理脚本 (终极修复版：底层引擎重写)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -46,54 +46,42 @@ url_encode() {
 }
 
 # ============================================================================
-# 🌟 终极专家版：0风险串行智能 SNI 优选器
+# 🌟 0风险串行智能 SNI 优选器
 # ============================================================================
 
 select_sni() {
     echo -e "\n--- 伪装域名 (SNI) 设置 ---"
-    echo -e "${gl_lv}1. 使用默认伪装域名 (www.microsoft.com)${gl_bai}"
+    echo -e "${gl_lv}1. 使用默认伪装域名${gl_bai}"
     echo -e "${gl_huang}2. 自动优选最佳域名（智能延迟测试）${gl_bai}"
     echo -e "${gl_hui}3. 手动输入域名${gl_bai}"
     read -e -p "请选择 (1/2/3): " sni_choice
     
     case $sni_choice in
-        1) 
-            echo "www.microsoft.com"
-            ;;
+        1) echo "www.microsoft.com" ;;
         2)
             echo -e "${gl_huang}[智能优选] 正在极速测试大厂域名连通性...${gl_bai}"
-            # 精选优质 SNI 候选池 (全部支持 TLS1.3 和 H2)
             local domains=("www.microsoft.com" "www.apple.com" "dl.google.com" "www.amazon.com" "www.samsung.com")
             local best_domain="www.microsoft.com"
             local best_time=9999
-            
-            # 采用串行极速探测，彻底杜绝并发卡死、僵尸进程等一切风险
             for domain in "${domains[@]}"; do
-                # 强制 IPv4 (-4) 防止 IPv6 真死，严格限制 1 秒超时
                 local time=$(curl -o /dev/null -s -w '%{time_connect}' --connect-timeout 1 --max-time 1 -4 "https://${domain}" 2>/dev/null)
-                # 转换为整数毫秒
                 time=$(echo "$time" | awk '{printf "%d", $1 * 1000}')
-                
                 if [[ -n "$time" && "$time" -gt 0 && "$time" -lt "$best_time" ]]; then
-                    best_time=$time
-                    best_domain=$domain
+                    best_time=$time; best_domain=$domain
                     echo -e "  ${gl_lv}✔ ${domain} 握手延迟: ${time}ms (当前最优)${gl_bai}"
                 else
                     echo -e "  ${gl_hui}✘ ${domain} 超时或不可达${gl_bai}"
                 fi
             done
-            
             echo -e "${gl_lv}[优选完成] 最终选用: ${best_domain} (握手延迟: ${best_time}ms)${gl_bai}"
             echo "$best_domain"
             ;;
         3)
-            read -e -p "请输入伪装域名 (如 www.yahoo.com): " custom_sni
+            read -e -p "请输入伪装域名: " custom_sni
             [[ -z "$custom_sni" ]] && custom_sni="www.microsoft.com"
             echo "$custom_sni"
             ;;
-        *) 
-            echo "www.microsoft.com" 
-            ;;
+        *) echo "www.microsoft.com" ;;
     esac
 }
 
@@ -183,9 +171,7 @@ view_links() {
     echo -e "${gl_kjlan}========================================${gl_bai}"
     echo -e "${gl_kjlan}     客户端一键导入链接 (实时同步)       "
     echo -e "${gl_kjlan}========================================${gl_bai}"
-    
     > "$LINKS_FILE" 
-    
     local count=$(jq 'length' "$RULES_JSON")
     local has_links=0
     local my_ip=$(curl -s --connect-timeout 2 ipinfo.io/ip 2>/dev/null || echo "你的服务器IP")
@@ -194,7 +180,6 @@ view_links() {
         local mode=$(jq -r ".[$i].mode" "$RULES_JSON")
         local type=$(jq -r ".[$i].type" "$RULES_JSON")
         local link=""
-        
         if [ "$mode" != "standalone" ]; then continue; fi
         
         case "$type" in
@@ -205,38 +190,29 @@ view_links() {
                 local fp=$(jq -r ".[$i].fingerprint" "$RULES_JSON")
                 local pubkey=$(jq -r ".[$i].public_key" "$RULES_JSON")
                 local short_id=$(jq -r ".[$i].short_id" "$RULES_JSON")
-                
                 link="vless://${uuid}@${my_ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(url_encode "$sni")&fp=$(url_encode "$fp")&pbk=$(url_encode "$pubkey")&sid=$(url_encode "$short_id")&type=tcp#Reality-${port}"
                 ;;
             hysteria2)
                 local pass=$(jq -r ".[$i].password" "$RULES_JSON")
                 local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
                 local sni=$(jq -r ".[$i].sni" "$RULES_JSON")
-                
                 link="hysteria2://$(url_encode "$pass")@${my_ip}:${port}?sni=$(url_encode "$sni")&insecure=1#Hy2-${port}"
                 ;;
             argo-vless-ws)
                 local uuid=$(jq -r ".[$i].uuid" "$RULES_JSON")
                 local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
                 local path=$(jq -r ".[$i].path" "$RULES_JSON")
-                
                 link="vless://${uuid}@你的CF域名:443?encryption=none&security=tls&type=ws&host=你的CF域名&path=$(url_encode "$path")#Argo-${port}"
                 ;;
         esac
-        
         if [ -n "$link" ]; then
             echo "$link" >> "$LINKS_FILE"
             echo -e "${gl_kjlan}${link}${gl_bai}"
             has_links=1
         fi
     done
-    
-    if [ "$has_links" -eq 0 ]; then
-        echo -e "${gl_hui}暂无链接。请先添加【本机直接落地】模式的节点。${gl_bai}"
-    else
-        echo -e "\n${gl_huang}----------------------------------------${gl_bai}"
-        echo -e "${gl_hui}提示: v2rayN -> 服务器 -> 从剪贴板导入批量URL${gl_bai}"
-    fi
+    if [ "$has_links" -eq 0 ]; then echo -e "${gl_hui}暂无链接。请先添加【本机直接落地】模式的节点。${gl_bai}"
+    else echo -e "\n${gl_huang}----------------------------------------${gl_bai}\n${gl_hui}提示: v2rayN -> 服务器 -> 从剪贴板导入批量URL${gl_bai}"; fi
     echo -e "${gl_kjlan}========================================${gl_bai}"
     read -rs -n 1 -p "按任意键返回..."
 }
@@ -260,20 +236,9 @@ manage_servers() {
         echo -e "0. 返回"
         echo -e "----------------------------------------"
         read -e -p "请输入选择: " choice
-        
         case $choice in
-            1) 
-                read -e -p "别名 (如 美国-01): " name
-                read -e -p "IP 地址: " ip
-                read -e -p "端口: " port
-                if [[ -n "$name" && -n "$ip" && -n "$port" ]]; then
-                    echo "$name $ip $port" >> "$SERVERS_LIST"
-                    echo -e "${gl_lv}✅ 添加成功${gl_bai}"
-                fi
-                read -rs -n 1 -p "按任意键继续..." ;;
-            2) 
-                cat "$SERVERS_LIST" | grep -vE '^$|#'
-                read -rs -n 1 -p "按任意键继续..." ;;
+            1) read -e -p "别名: " name; read -e -p "IP: " ip; read -e -p "端口: " port; [[ -n "$name" && -n "$ip" && -n "$port" ]] && echo "$name $ip $port" >> "$SERVERS_LIST" && echo -e "${gl_lv}✅ 添加成功${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
+            2) cat "$SERVERS_LIST" | grep -vE '^$|#'; read -rs -n 1 -p "按任意键继续..." ;;
             3) echo "" > "$SERVERS_LIST"; echo -e "${gl_lv}已清空${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
             0|"") break ;;
         esac
@@ -289,31 +254,22 @@ select_server() {
     echo -e "${gl_lv}1. 从预设列表选择${gl_bai}"
     echo -e "${gl_hui}2. 手动输入 IP 和端口${gl_bai}"
     read -e -p "请选择 (1/2): " s_choice
-    
     if [ "$s_choice" == "1" ]; then
         local count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
         if [ "$count" -eq 0 ]; then echo -e "${gl_red}列表为空，已切为手动输入${gl_bai}"; sleep 1; return 1; fi
         local idx=1
-        while IFS=' ' read -r name ip port; do
-            [[ -z "$name" || "$name" == "#" ]] && continue
-            printf "${gl_lv}%d. %-15s ${gl_hui}(%s:%s)${gl_bai}\n" "$idx" "$name" "$ip" "$port"
-            idx=$((idx+1))
-        done < "$SERVERS_LIST"
+        while IFS=' ' read -r name ip port; do [[ -z "$name" || "$name" == "#" ]] && continue; printf "${gl_lv}%d. %-15s ${gl_hui}(%s:%s)${gl_bai}\n" "$idx" "$name" "$ip" "$port"; idx=$((idx+1)); done < "$SERVERS_LIST"
         read -e -p "输入序号: " s_idx
         if [[ "$s_idx" =~ ^[0-9]+$ ]] && [ "$s_idx" -ge 1 ] && [ "$s_idx" -lt "$idx" ]; then
             SERVER_IP=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_idx}p" | awk '{print $2}')
             SERVER_PORT=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_idx}p" | awk '{print $3}')
             return 0
-        else
-            return 1
-        fi
-    else
-        return 1
-    fi
+        else return 1; fi
+    else return 1; fi
 }
 
 # ============================================================================
-# 丝滑添加节点入口
+# 丝滑添加节点入口 (恢复纯转发)
 # ============================================================================
 
 add_node_selector() {
@@ -324,24 +280,21 @@ add_node_selector() {
     echo -e "${gl_lv}1. VLESS + Reality      - 抗审查，无需证书${gl_bai}"
     echo -e "${gl_huang}2. Hysteria2            - 极速 QUIC 协议${gl_bai}"
     echo -e "${gl_kjlan}3. Argo + VLESS + WS    - 隐藏源IP${gl_bai}"
+    echo -e "${gl_hui}4. 纯端口转发 (TCP/UDP 穿透)${gl_bai}"
     echo -e "----------------------------------------"
     echo -e "0. 返回"
     echo -e "${gl_kjlan}========================================${gl_bai}"
     read -e -p "请选择协议: " proto
-    
     case $proto in
         1) add_reality ;;
         2) add_hysteria2 ;;
         3) add_argo_vless_ws ;;
+        4) add_direct ;;
         0|"") return 0 ;;
         *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
     esac
     read -rs -n 1 -p "按任意键继续..."
 }
-
-# ============================================================================
-# 端口校验
-# ============================================================================
 
 check_port() {
     if ! [[ "$1" =~ ^[0-9]+$ ]] || [ "$1" -lt 1 ] || [ "$1" -gt 65535 ]; then echo -e "${gl_red}端口格式错误${gl_bai}"; return 1; fi
@@ -349,7 +302,7 @@ check_port() {
 }
 
 # ============================================================================
-# VLESS + Reality
+# VLESS + Reality (修复服务端Flow错误)
 # ============================================================================
 
 add_reality() {
@@ -365,7 +318,6 @@ add_reality() {
         echo -e "${gl_huang}[全自动] 正在生成密钥对和UUID...${gl_bai}"
         local uuid=$(cat /proc/sys/kernel/random/uuid)
         local priv_key="" pubkey=""
-        
         if command -v sing-box >/dev/null 2>&1; then
             local keys=$(sing-box generate reality-keypair 2>/dev/null)
             priv_key=$(echo "$keys" | grep "PrivateKey" | awk '{print $2}')
@@ -375,12 +327,8 @@ add_reality() {
             priv_key=$(echo "$keys" | head -n 1 | awk '{print $3}')
             pubkey=$(echo "$keys" | tail -n 1 | awk '{print $3}')
         fi
+        if [[ -z "$pubkey" || -z "$priv_key" ]]; then echo -e "${gl_red}❌ 生成失败${gl_bai}"; return 1; fi
         
-        if [[ -z "$pubkey" || -z "$priv_key" ]]; then
-            echo -e "${gl_red}❌ 生成失败，请确保系统装有 sing-box 核心后再试。${gl_bai}"; return 1
-        fi
-        
-        # 调用终极版智能 SNI 选择器
         local sni=$(select_sni)
         read -e -p "TLS 指纹 (直接回车默认 chrome): " fp; [[ -z "$fp" ]] && fp="chrome"
         read -e -p "短ID ShortId (可留空): " short_id
@@ -390,30 +338,20 @@ add_reality() {
            --arg short_id "${short_id:-""}" --arg sni "$sni" --arg fp "$fp" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "uuid": $uuid, "private_key": $priv_key, "public_key": $pubkey, "short_id": $short_id, "sni": $sni, "fingerprint": $fp}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-           
         echo -e "${gl_lv}✅ 节点已生成！请去菜单选择【4】查看并复制一键导入链接。${gl_bai}"
-        
     else
-        if select_server; then
-            local ip="$SERVER_IP"; local bport="$SERVER_PORT"
-        else
-            read -e -p "后端 IP (如 127.0.0.1): " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP为空${gl_bai}" && return 1
-            read -e -p "后端端口: " bport
-            if ! [[ "$bport" =~ ^[0-9]+$ ]] || [ "$bport" -lt 1 ] || [ "$bport" -gt 65535 ]; then echo -e "${gl_red}端口错误${gl_bai}"; return 1; fi
-        fi
+        if select_server; then local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+        else read -e -p "后端 IP: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
         
-        read -e -p "后端的 Reality 公钥 (输入 G 自动生成一对): " pubkey
+        read -e -p "后端 Reality 公钥 (输入 G 自动生成): " pubkey
         if [[ "$pubkey" =~ ^[Gg]$ ]]; then
             local keys=$(sing-box generate reality-keypair 2>/dev/null || xray x25519 2>/dev/null)
             priv_key=$(echo "$keys" | grep "Private" | awk '{print $NF}')
             pubkey=$(echo "$keys" | grep "Public" | awk '{print $NF}')
-            echo -e "${gl_red}⚠️  请将此私钥填入你的后端面板: ${gl_kjlan}${priv_key}${gl_bai}"
-            read -rs -n 1 -p "按任意键继续..."
-        elif [[ -z "$pubkey" ]]; then
-            echo -e "${gl_red}公钥不能为空！${gl_bai}"; return 1
-        fi
+            echo -e "${gl_red}⚠️  请将此私钥填入后端: ${gl_kjlan}${priv_key}${gl_bai}"; read -rs -n 1 -p "按任意键继续..."
+        elif [[ -z "$pubkey" ]]; then echo -e "${gl_red}公钥不能为空！${gl_bai}"; return 1; fi
         
-        read -e -p "短ID (需与后端一致): " short_id
+        read -e -p "短ID: " short_id
         local sni=$(select_sni)
         read -e -p "Fingerprint: " fp; [[ -z "$fp" ]] && fp="chrome"
 
@@ -421,13 +359,12 @@ add_reality() {
            --arg ip "$ip" --argjson bport "$bport" --arg pubkey "$pubkey" --arg short_id "${short_id:-""}" --arg sni "$sni" --arg fp "$fp" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "server": $ip, "server_port": $bport, "public_key": $pubkey, "short_id": $short_id, "sni": $sni, "fingerprint": $fp}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-           
-        echo -e "${gl_lv}✅ Reality 中转规则添加成功！${gl_bai}"
+        echo -e "${gl_lv}✅ 中转规则添加成功！${gl_bai}"
     fi
 }
 
 # ============================================================================
-# Hysteria2
+# Hysteria2 (修复服务端无证书错误，自动生成自签证书)
 # ============================================================================
 
 add_hysteria2() {
@@ -436,27 +373,27 @@ add_hysteria2() {
     
     echo -e "\n${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
     echo -e "${gl_lv}1. 中转模式${gl_bai}"
-    echo -e "${gl_kjlan}2. 本机直接落地 (全自动生成) ★小白推荐${gl_bai}"
+    echo -e "${gl_kjlan}2. 本机直接落地 (全自动生成含自签证书) ★${gl_bai}"
     read -e -p "请选择 (1/2): " h_mode
     
     if [ "$h_mode" == "2" ]; then
         local pass=$(openssl rand -base64 16)
         local sni=$(select_sni)
         
+        # 底层自动生成自签证书，解决服务端必须依赖证书的问题
+        if [ ! -f "/etc/sing-box/hy2.crt" ] || [ ! -f "/etc/sing-box/hy2.key" ]; then
+            echo -e "${gl_hui}[底层] 正在自动生成自签证书...${gl_bai}"
+            openssl req -x509 -nodes -newkey ec:<(openssl ecparam -name prime256v1) -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=${sni}" -days 36500 2>/dev/null
+        fi
+        
         jq --arg type "hysteria2" --argjson port "$port" --arg mode "standalone" \
            --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "password": $pass, "sni": $sni}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-           
-        echo -e "${gl_lv}✅ Hy2 节点已生成！请去菜单选择【4】查看并复制一键导入链接。${gl_bai}"
+        echo -e "${gl_lv}✅ Hy2 节点已生成！(因使用自签证书，客户端需开启允许不安全)${gl_bai}"
     else
-        if select_server; then
-            local ip="$SERVER_IP"; local bport="$SERVER_PORT"
-        else
-            read -e -p "后端 IP: " ip; [[ -z "$ip" ]] && return 1
-            read -e -p "后端端口: " bport
-            if ! [[ "$bport" =~ ^[0-9]+$ ]] || [ "$bport" -lt 1 ] || [ "$bport" -gt 65535 ]; then return 1; fi
-        fi
+        if select_server; then local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+        else read -e -p "后端 IP: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
         read -e -p "密码: " pass; [[ -z "$pass" ]] && return 1
         local sni=$(select_sni)
 
@@ -464,7 +401,7 @@ add_hysteria2() {
            --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "server": $ip, "server_port": $bport, "password": $pass, "sni": $sni}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-        echo -e "${gl_lv}✅ Hy2 中转规则添加成功${gl_bai}"
+        echo -e "${gl_lv}✅ 中转规则添加成功${gl_bai}"
     fi
 }
 
@@ -475,37 +412,43 @@ add_hysteria2() {
 add_argo_vless_ws() {
     echo -e "\n${gl_lan}--- Argo + VLESS + WS 配置 ---${gl_bai}"
     read -e -p "本机监听端口 (如 8080): " port; check_port "$port" || return 1
-    
     echo -e "\n${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
     echo -e "${gl_lv}1. 中转模式${gl_bai}"
-    echo -e "${gl_kjlan}2. 本机直接落地 (配合 CF Argo 使用) ★${gl_bai}"
+    echo -e "${gl_kjlan}2. 本机直接落地 (配合 CF Argo) ★${gl_bai}"
     read -e -p "请选择 (1/2): " a_mode
     
     if [ "$a_mode" == "2" ]; then
         local uuid=$(cat /proc/sys/kernel/random/uuid)
         read -e -p "WebSocket 路径 (如 /ray): " path; [[ -z "$path" ]] && path="/ray"
-        
-        jq --arg type "argo-vless-ws" --argjson port "$port" --arg mode "standalone" \
-           --arg uuid "$uuid" --arg path "$path" \
+        jq --arg type "argo-vless-ws" --argjson port "$port" --arg mode "standalone" --arg uuid "$uuid" --arg path "$path" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "uuid": $uuid, "path": $path}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-           
-        echo -e "${gl_lv}✅ Argo 后端已生成！请去菜单选择【4】查看并复制链接 (需自行修改CF域名)。${gl_bai}"
+        echo -e "${gl_lv}✅ Argo 后端已生成！${gl_bai}"
     else
-        if select_server; then
-            local ip="$SERVER_IP"; local bport="$SERVER_PORT"
-        else
-            read -e -p "后端 IP/域名: " ip; [[ -z "$ip" ]] && return 1
-            read -e -p "后端端口: " bport
-            if ! [[ "$bport" =~ ^[0-9]+$ ]] || [ "$bport" -lt 1 ] || [ "$bport" -gt 65535 ]; then return 1; fi
-        fi
+        if select_server; then local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+        else read -e -p "后端 IP/域名: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
         read -e -p "WebSocket 路径: " path; [[ -z "$path" ]] && path="/"
-
         jq --arg type "argo-vless-ws" --argjson port "$port" --arg mode "relay" --arg ip "$ip" --argjson bport "$bport" --arg path "$path" \
            '. += [{"type": $type, "listen_port": $port, "mode": $mode, "server": $ip, "server_port": $bport, "path": $path}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-        echo -e "${gl_lv}✅ Argo 中转规则添加成功${gl_bai}"
+        echo -e "${gl_lv}✅ 中转规则添加成功${gl_bai}"
     fi
+}
+
+# ============================================================================
+# 纯端口转发 (恢复功能)
+# ============================================================================
+
+add_direct() {
+    echo -e "\n${gl_lan}--- 纯端口转发配置 ---${gl_bai}"
+    read -e -p "本机监听端口: " port; check_port "$port" || return 1
+    if select_server; then local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+    else read -e -p "后端目标 IP: " ip; [[ -z "$ip" ]] && return 1; read -e -p "后端目标端口: " bport; [[ ! "$bport" =~ ^[0-9]+$ ]] && return 1; fi
+
+    jq --arg type "direct" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
+       '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport}]' \
+       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+    echo -e "${gl_lv}✅ 纯转发节点添加成功${gl_bai}"
 }
 
 # ============================================================================
@@ -518,39 +461,25 @@ view_rules() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
     local count=$(jq 'length' "$RULES_JSON")
     if [ "$count" -eq 0 ]; then echo -e "${gl_hui}暂无节点${gl_bai}"; return 0; fi
-    
     for ((i=0; i<count; i++)); do
         local type=$(jq -r ".[$i].type" "$RULES_JSON")
         local mode=$(jq -r ".[$i].mode" "$RULES_JSON")
         local port=$(jq -r ".[$i].listen_port" "$RULES_JSON")
-        
-        local mode_str=""
-        local info=""
-        if [ "$mode" == "standalone" ]; then
-            mode_str="${gl_kjlan}[本机落地直连]${gl_bai}"
+        local mode_str=""; local info=""
+        if [ "$mode" == "standalone" ]; then mode_str="${gl_kjlan}[本机落地]${gl_bai}"
+        elif [ "$type" == "direct" ]; then
+            mode_str="${gl_hui}[纯转发]${gl_bai} -> $(jq -r ".[$i].server" "$RULES_JSON"):$(jq -r ".[$i].server_port" "$RULES_JSON")"
         else
-            mode_str="${gl_hui}[中转]${gl_bai}"
-            local ip=$(jq -r ".[$i].server" "$RULES_JSON")
-            local bport=$(jq -r ".[$i].server_port" "$RULES_JSON")
-            [ "$ip" == "-1" ] && ip="127.0.0.1"
-            [ "$bport" == "-1" ] && bport="$port"
-            mode_str+=" -> ${ip}:${bport}"
+            mode_str="${gl_hui}[中转]${gl_bai} -> $(jq -r ".[$i].server" "$RULES_JSON"):$(jq -r ".[$i].server_port" "$RULES_JSON")"
         fi
-
         case $type in
-            vless-reality) 
-                info="Reality $(jq -r ".[$i].sni" "$RULES_JSON")" 
-                [ "$mode" == "standalone" ] && info+=" | PK: $(jq -r ".[$i].public_key" "$RULES_JSON" | cut -c1-20)..."
-                ;;
-            hysteria2) info="Hy2(UDP) $(jq -r ".[$i].sni" "$RULES_JSON")" 
-                [ "$mode" == "standalone" ] && info+=" | Pass: $(jq -r ".[$i].password" "$RULES_JSON" | cut -c1-10)..."
-                ;;
-            argo-vless-ws) info="Argo+WS $(jq -r ".[$i].path" "$RULES_JSON")" 
-                [ "$mode" == "standalone" ] && info+=" | UUID: $(jq -r ".[$i].uuid" "$RULES_JSON" | cut -c1-10)..."
-                ;;
-            *) info="未知协议" ;;
+            vless-reality) info="Reality $(jq -r ".[$i].sni" "$RULES_JSON")" ;;
+            hysteria2) info="Hy2(UDP) $(jq -r ".[$i].sni" "$RULES_JSON")" ;;
+            argo-vless-ws) info="Argo+WS $(jq -r ".[$i].path" "$RULES_JSON")" ;;
+            direct) info="TCP/UDP 转发" ;;
+            *) info="未知" ;;
         esac
-        printf "${gl_lv}[%d] 端口:%-6s %-20s %s${gl_bai}\n" "$i" "$port" "$mode_str" "$info"
+        printf "${gl_lv}[%d] 端口:%-6s %-18s %s${gl_bai}\n" "$i" "$port" "$mode_str" "$info"
     done
 }
 
@@ -561,14 +490,12 @@ del_rule() {
     read -e -p "输入要删除的节点序号 (如 0): " idx
     if [[ "$idx" =~ ^[0-9]+$ ]] && [ "$idx" -lt $(jq 'length' "$RULES_JSON") ]; then
         jq "del(.[$idx])" "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
-        echo -e "${gl_lv}✅ 已删除节点，对应的客户端链接已自动失效。${gl_bai}"
-    else
-        echo -e "${gl_red}序号无效${gl_bai}"
-    fi
+        echo -e "${gl_lv}✅ 已删除${gl_bai}"
+    else echo -e "${gl_red}序号无效${gl_bai}"; fi
 }
 
 # ============================================================================
-# 核心引擎：多协议动态 JSON 生成
+# 核心引擎：彻底修复的 JSON 生成器
 # ============================================================================
 
 build_json() {
@@ -585,10 +512,11 @@ build_json() {
         case "$type" in
             vless-reality)
                 if [ "$mode" == "standalone" ]; then
+                    # 【修复】作为服务端，绝对不能加 flow 字段！
                     json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
                         '.inbounds += [{
                             type: "vless", tag: $tag, listen: "::", listen_port: $rule.listen_port,
-                            uuid: $rule.uuid, flow: "xtls-rprx-vision",
+                            uuid: $rule.uuid,
                             tls: {
                                 enabled: true, server_name: $rule.sni,
                                 utls: { enabled: true, fingerprint: $rule.fingerprint },
@@ -596,6 +524,7 @@ build_json() {
                             }
                         }]')
                 else
+                    # 作为中转客户端出站，flow 是必须的
                     local out_tag="out-${port}"
                     json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" \
                         '.inbounds += [{type:"mixed", tag:$tag, listen:"::", listen_port:$p}]')
@@ -614,14 +543,17 @@ build_json() {
                     json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{inbound:[$in], outbound:$out}]')
                 fi
                 ;;
-                
             hysteria2)
                 if [ "$mode" == "standalone" ]; then
+                    # 【修复】作为服务端，必须注入证书，不能用 insecure
                     json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
                         '.inbounds += [{
                             type: "hysteria2", tag: $tag, listen: "::", listen_port: $rule.listen_port,
                             password: $rule.password,
-                            tls: { enabled: true, server_name: $rule.sni, insecure: true }
+                            tls: {
+                                enabled: true, server_name: $rule.sni,
+                                certificates: [{certificate: "/etc/sing-box/hy2.crt", key: "/etc/sing-box/hy2.key"}]
+                            }
                         }]')
                 else
                     local out_tag="out-${port}"
@@ -638,55 +570,40 @@ build_json() {
                     json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{inbound:[$in], outbound:$out}]')
                 fi
                 ;;
-                
             argo-vless-ws)
                 if [ "$mode" == "standalone" ]; then
                     json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
-                        '.inbounds += [{
-                            type: "vless", tag: $tag, listen: "::", listen_port: $rule.listen_port,
-                            uuid: $rule.uuid,
-                            transport: { type: "ws", path: $rule.path }
-                        }]')
+                        '.inbounds += [{type: "vless", tag: $tag, listen: "::", listen_port: $rule.listen_port, uuid: $rule.uuid, transport: { type: "ws", path: $rule.path }}]')
                 else
                     local out_tag="out-${port}"
                     json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" \
                         '.inbounds += [{type:"mixed", tag:$tag, listen:"::", listen_port:$p}]')
                     json=$(echo "$json" | jq --arg tag "$out_tag" --argjson p "$port" --argjson rule "$rule" \
-                        '.outbounds += [{
-                            type: "vless", tag: $tag, 
-                            server: (if $rule.server == "-1" then "127.0.0.1" else $rule.server end), 
-                            server_port: (if $rule.server_port == -1 then $p else $rule.server_port end),
-                            uuid: "00000000-0000-0000-0000-000000000000",
-                            transport: { type: "ws", path: $rule.path }
-                        }]')
+                        '.outbounds += [{type: "vless", tag: $tag, server: (if $rule.server == "-1" then "127.0.0.1" else $rule.server end), server_port: (if $rule.server_port == -1 then $p else $rule.server_port end), uuid: "00000000-0000-0000-0000-000000000000", transport: { type: "ws", path: $rule.path }}]')
                     json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{inbound:[$in], outbound:$out}]')
                 fi
                 ;;
+            direct)
+                json=$(echo "$json" | jq --argjson rule "$rule" --arg tag "$in_tag" \
+                    '.inbounds += [{type: "direct", tag: $tag, listen:"::", listen_port: $rule.listen_port, override_address: $rule.server, override_port: $rule.server_port}]')
+                continue
+                ;;
         esac
     done
-    
     echo "$json" > "$TMP_FILE"
 }
 
 apply_config() {
-    if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then
-        echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; return 1
-    fi
-    echo -e "${gl_lv}[1/3] 正在生成多协议 JSON...${gl_bai}"
+    if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; return 1; fi
+    echo -e "${gl_lv}[1/3] 正在生成 JSON...${gl_bai}"
     build_json
-    
     echo -e "${gl_lv}[2/3] 安全校验中...${gl_bai}"
     local err=$(sing-box check -c "$TMP_FILE" 2>&1)
-    if [ $? -ne 0 ]; then
-        echo -e "${gl_red}❌ 校验失败！已拦截。${gl_bai}\n${err}"
-        rm -f "$TMP_FILE"; return 1
-    fi
-    
+    if [ $? -ne 0 ]; then echo -e "${gl_red}❌ 校验失败！${gl_bai}\n${err}"; rm -f "$TMP_FILE"; return 1; fi
     echo -e "${gl_lv}[3/3] 无缝热重载...${gl_bai}"
     cp -f "$TMP_FILE" "$CONF_FILE" && rm -f "$TMP_FILE"
     systemctl restart sing-box
-    
-    [ $? -eq 0 ] && echo -e "${gl_lv}✅ 配置已重载，服务运行中！${gl_bai}" || echo -e "${gl_red}❌ 启动失败，请运行 journalctl -u sing-box -n 20 查看日志${gl_bai}"
+    [ $? -eq 0 ] && echo -e "${gl_lv}✅ 配置已重载，服务运行中！${gl_bai}" || echo -e "${gl_red}❌ 启动失败${gl_bai}"
 }
 
 # ============================================================================
@@ -699,7 +616,6 @@ main_menu() {
         clear
         local core="${gl_red}未安装${gl_bai}"
         command -v sing-box >/dev/null 2>&1 && core="${gl_lv}已安装 ✅${gl_bai}"
-        
         echo -e "${gl_kjlan}========================================${gl_bai}"
         echo -e "${gl_kjlan}    Sing-Box 全自动节点管理脚本         "
         echo -e "${gl_kjlan}========================================${gl_bai}"
