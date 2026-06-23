@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 多协议中转管理脚本 (丝滑交互版)
-# 支持: VLESS+Reality / Hysteria2 / Argo+VLESS+WS
-# 运行: bash <(curl -fsSL https://raw.githubusercontent.com/wuy62380-ship-it/sbx-YW/main/sbx-yw.sh)
+# Sing-Box 多协议中转管理脚本 (落地机池实战版)
+# 支持: 预设落地机 / 协议中转 / 纯端口穿透
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -15,6 +14,7 @@
 
 # --- 核心路径 ---
 RULES_JSON="/etc/sing-box/sb-relay-rules.json"
+SERVERS_LIST="/etc/sing-box/sb-servers.list" # 新增：落地机池文件
 CONF_FILE="/etc/sing-box/config.json"
 TMP_FILE="/tmp/sb-relay-tmp.json"
 
@@ -32,6 +32,7 @@ check_basic_env() {
     fi
     mkdir -p /etc/sing-box
     [ ! -f "$RULES_JSON" ] && echo '[]' > "$RULES_JSON"
+    [ ! -f "$SERVERS_LIST" ] && touch "$SERVERS_LIST"
 }
 
 # ============================================================================
@@ -64,7 +65,7 @@ install_singbox() {
 }
 
 # ============================================================================
-# 模块 2：节点管理 (丝滑版：选协议直接填参数)
+# 模块 2：节点管理 (重构版)
 # ============================================================================
 
 node_manager_menu() {
@@ -77,29 +78,33 @@ node_manager_menu() {
         clear
         local status="${gl_red}未运行${gl_bai}"; systemctl is-active --quiet sing-box && status="${gl_lv}运行中 ✅${gl_bai}"
         local count=$(jq 'length' "$RULES_JSON")
+        local server_count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
         
         echo -e "${gl_kjlan}========================================${gl_bai}"
         echo -e "${gl_kjlan}             节 点 管 理                 "
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        echo -e "服务状态: ${status}  |  节点数量: ${gl_lv}${count}${gl_bai} 个"
+        echo -e "服务状态: ${status}  |  中转节点: ${gl_lv}${count}${gl_bai} 个  |  落地机: ${gl_lv}${server_count}${gl_bai} 台"
         echo -e "----------------------------------------"
-        echo -e "${gl_lv}1.  添加节点 (选择协议)${gl_bai}"
-        echo -e "${gl_huang}2.  查看当前节点列表${gl_bai}"
-        echo -e "${gl_red}3.  删除指定节点${gl_bai}"
+        echo -e "${gl_lv}1. 添加节点 (选择模式与协议)${gl_bai}"
+        echo -e "${gl_huang}2. 落地机管理 (预设后端服务器) ${gl_huang}★${gl_bai}"
         echo -e "----------------------------------------"
-        echo -e "${gl_lv}4.  🧨 校验并应用配置 (热重载) ${gl_huang}★${gl_bai}"
-        echo -e "${gl_hui}5.  停止中转服务${gl_bai}"
+        echo -e "3. 查看当前中转节点"
+        echo -e "${gl_red}4. 删除指定节点${gl_bai}"
         echo -e "----------------------------------------"
-        echo -e "0.  返回主菜单"
+        echo -e "${gl_lv}5. 🧨 校验并应用配置 (热重载) ${gl_huang}★${gl_bai}"
+        echo -e "${gl_hui}6. 停止中转服务${gl_bai}"
+        echo -e "----------------------------------------"
+        echo -e "0. 返回主菜单"
         echo -e "${gl_kjlan}========================================${gl_bai}"
         read -e -p "请输入选择: " choice
         
         case $choice in
-            1) add_node_selector ;; # 进入丝滑选择器
-            2) view_rules; read -rs -n 1 -p "按任意键继续..." ;;
-            3) del_rule; read -rs -n 1 -p "按任意键继续..." ;;
-            4) apply_config; read -rs -n 1 -p "按任意键继续..." ;;
-            5) systemctl stop sing-box && echo -e "${gl_lv}已停止${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
+            1) add_node_selector ;;
+            2) manage_servers ;;
+            3) view_rules; read -rs -n 1 -p "按任意键继续..." ;;
+            4) del_rule; read -rs -n 1 -p "按任意键继续..." ;;
+            5) apply_config; read -rs -n 1 -p "按任意键继续..." ;;
+            6) systemctl stop sing-box && echo -e "${gl_lv}已停止${gl_bai}"; read -rs -n 1 -p "按任意键继续..." ;;
             0|"") break ;;
             *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
         esac
@@ -107,36 +112,137 @@ node_manager_menu() {
 }
 
 # ============================================================================
-# 丝滑协议选择器 (模仿主流脚本)
+# 落地机池管理
+# ============================================================================
+
+manage_servers() {
+    while true; do
+        clear
+        local count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
+        echo -e "${gl_huang}========================================${gl_bai}"
+        echo -e "${gl_huang}             落 地 机 管 理               "
+        echo -e "${gl_huang}========================================${gl_bai}"
+        echo -e "当前已预设: ${gl_lv}${count}${gl_bai} 台落地机"
+        echo -e "----------------------------------------"
+        echo -e "${gl_lv}1. 添加落地机 (名称 IP 端口)${gl_bai}"
+        echo -e "${gl_huang}2. 查看落地机列表${gl_bai}"
+        echo -e "${gl_red}3. 清空所有落地机${gl_bai}"
+        echo -e "----------------------------------------"
+        echo -e "0. 返回节点管理"
+        echo -e "${gl_huang}========================================${gl_bai}"
+        read -e -p "请输入选择: " choice
+        
+        case $choice in
+            1) 
+                echo -e "\n--- 添加落地机 ---"
+                read -e -p "别名 (如 美国-01): " name
+                read -e -p "IP 地址: " ip
+                read -e -p "端口 (如 443): " port
+                if [[ -n "$name" && -n "$ip" && -n "$port" ]]; then
+                    echo "$name $ip $port" >> "$SERVERS_LIST"
+                    echo -e "${gl_lv}✅ 落地机 [${name}] 添加成功${gl_bai}"
+                else
+                    echo -e "${gl_red}信息填写不完整${gl_bai}"
+                fi
+                read -rs -n 1 -p "按任意键继续..." ;;
+            2) 
+                echo -e "\n--- 落地机列表 ---"
+                if [ "$count" -eq 0 ]; then echo -e "${gl_hui}暂无预设${gl_bai}"
+                else
+                    local idx=1
+                    while IFS=' ' read -r name ip port; do
+                        [[ -z "$name" || "$name" == "#" ]] && continue
+                        echo -e "${lv}[${idx}] ${name} \t ${gl_bai}${ip}:${port}"
+                        idx=$((idx+1))
+                    done < "$SERVERS_LIST"
+                fi
+                read -rs -n 1 -p "按任意键继续..." ;;
+            3) 
+                echo "" > "$SERVERS_LIST"
+                echo -e "${gl_lv}✅ 已清空所有落地机预设${gl_bai}"
+                read -rs -n 1 -p "按任意键继续..." ;;
+            0|"") break ;;
+            *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
+        esac
+    done
+}
+
+# 核心黑科技：丝滑选择落地机 (返回0表示选中预设，返回1表示走手动输入)
+SERVER_IP=""
+SERVER_PORT=""
+select_server() {
+    local count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
+    if [ "$count" -gt 0 ]; then
+        echo -e "\n--- 请选择后端落地机 ---"
+        local idx=1
+        while IFS=' ' read -r name ip port; do
+            [[ -z "$name" || "$name" == "#" ]] && continue
+            echo -e "${gl_lv}${idx}. ${name} ${gl_hui}(${ip}:${port})${gl_bai}"
+            idx=$((idx+1))
+        done < "$SERVERS_LIST"
+        echo -e "${gl_hui}0. 手动输入 IP 和 端口${gl_bai}"
+        echo "----------------------------------------"
+        read -e -p "请选择: " s_choice
+        
+        if [[ "$s_choice" =~ ^[0-9]+$ ]] && [ "$s_choice" -ge 1 ] && [ "$s_choice" -lt "$idx" ]; then
+            SERVER_IP=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_choice}p" | awk '{print $2}')
+            SERVER_PORT=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_choice}p" | awk '{print $3}')
+            echo -e "${gl_lv}已选择: ${SERVER_IP}:${SERVER_PORT}${gl_bai}"
+            return 0
+        fi
+    fi
+    echo -e "${gl_hui}未找到预设或选择手动，进入手动输入模式...${gl_bai}"
+    return 1
+}
+
+# ============================================================================
+# 丝滑添加节点入口
 # ============================================================================
 
 add_node_selector() {
     clear
     echo -e "${gl_kjlan}========================================${gl_bai}"
-    echo -e "${gl_kjlan}          选择要添加的节点协议            "
+    echo -e "${gl_kjlan}          选择中转模式与协议             "
     echo -e "${gl_kjlan}========================================${gl_bai}"
-    echo -e "${gl_lv}1.  VLESS + Reality       - 无需证书，抗审查${gl_bai}"
-    echo -e "${gl_huang}2.  Hysteria2             - 高性能 QUIC 协议${gl_bai}"
-    echo -e "${gl_kjlan}3.  Argo+VLESS+WS         - 隐藏IP，快速部署${gl_bai}"
+    echo -e "${gl_lv}1. 协议中转 (VLESS+Reality/Hy2/Argo)${gl_bai}"
+    echo -e "${gl_hui}2. 纯端口转发 (无加密 TCP/UDP 穿透)${gl_bai}"
     echo -e "----------------------------------------"
-    echo -e "0.  返回节点管理"
+    echo -e "0. 返回节点管理"
     echo -e "${gl_kjlan}========================================${gl_bai}"
-    read -e -p "请选择协议: " proto
+    read -e -p "请选择模式: " mode
     
-    case $proto in
-        1) add_reality ;;
-        2) add_hysteria2 ;;
-        3) add_argo_vless_ws ;;
+    case $mode in
+        1) 
+            clear
+            echo -e "${gl_kjlan}========================================${gl_bai}"
+            echo -e "${gl_kjlan}          选择加密协议                  "
+            echo -e "${gl_kjlan}========================================${gl_bai}"
+            echo -e "${gl_lv}1. VLESS + Reality       - 无需证书，抗审查${gl_bai}"
+            echo -e "${gl_huang}2. Hysteria2             - 高性能 QUIC 协议${gl_bai}"
+            echo -e "${gl_kjlan}3. Argo+VLESS+WS         - 隐藏IP，快速部署${gl_bai}"
+            echo -e "----------------------------------------"
+            echo -e "0. 返回"
+            echo -e "${gl_kjlan}========================================${gl_bai}"
+            read -e -p "请选择协议: " proto
+            
+            case $proto in
+                1) add_reality ;;
+                2) add_hysteria2 ;;
+                3) add_argo_vless_ws ;;
+                0|"") return 0 ;;
+                *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
+            esac
+            ;;
+        2) add_direct ;;
         0|"") return 0 ;;
         *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
     esac
     
-    # 填完参数后，按任意键平滑回到节点管理
     read -rs -n 1 -p "按任意键继续..."
 }
 
 # ============================================================================
-# 协议参数收集器 (直接在当前终端往下走)
+# 协议参数收集器 (已集成落地机池)
 # ============================================================================
 
 check_port() {
@@ -147,12 +253,18 @@ check_port() {
 add_reality() {
     echo -e "\n--- VLESS + Reality 节点配置 ---"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
-    read -e -p "后端落地 IP: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP为空${gl_bai}" && return 1
-    read -e -p "后端落地端口 (如 443): " bport; check_port "$bport" || return 1
+    
+    if select_server; then
+        local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+    else
+        read -e -p "后端落地 IP: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP为空${gl_bai}" && return 1
+        read -e -p "后端落地端口: " bport; check_port "$bport" || return 1
+    fi
+    
     read -e -p "Reality 公钥: " pubkey; [[ -z "$pubkey" ]] && echo -e "${gl_red}公钥必填${gl_bai}" && return 1
-    read -e -p "Reality 短ID (Short ID, 可留空): " short_id
+    read -e -p "Reality 短ID (可留空): " short_id
     read -e -p "伪装域名 (SNI, 如 www.microsoft.com): " sni; [[ -z "$sni" ]] && sni="www.microsoft.com"
-    read -e -p "TLS 指纹 (如 chrome, firefox): " fp; [[ -z "$fp" ]] && fp="chrome"
+    read -e -p "TLS 指纹 (如 chrome): " fp; [[ -z "$fp" ]] && fp="chrome"
 
     jq --arg type "vless-reality" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        --arg pubkey "$pubkey" --arg short_id "${short_id:-""}" --arg sni "$sni" --arg fp "$fp" \
@@ -165,11 +277,16 @@ add_reality() {
 add_argo_vless_ws() {
     echo -e "\n--- Argo + VLESS + WS 节点配置 ---"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
-    read -e -p "后端落地 IP (或套了CF的域名): " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP/域名必填${gl_bai}" && return 1
-    read -e -p "后端落地端口 (如 443): " bport; check_port "$bport" || return 1
-    read -e -p "WebSocket 路径 (Path, 如 /ray): " path; [[ -z "$path" ]] && path="/"
     
-    echo -e "${gl_hui}提示: 中转机到后端默认不启用TLS(由后端或CF处理)。${gl_bai}"
+    if select_server; then
+        local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+    else
+        read -e -p "后端落地 IP/域名: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}必填${gl_bai}" && return 1
+        read -e -p "后端落地端口: " bport; check_port "$bport" || return 1
+    fi
+    
+    read -e -p "WebSocket 路径 (如 /ray): " path; [[ -z "$path" ]] && path="/"
+    echo -e "${gl_hui}提示: 中转机默认不启用TLS(由后端CF处理)。${gl_bai}"
 
     jq --arg type "argo-vless-ws" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" --arg path "$path" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport, "path": $path}]' \
@@ -181,11 +298,17 @@ add_argo_vless_ws() {
 add_hysteria2() {
     echo -e "\n--- Hysteria 2 节点配置 ---"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
-    read -e -p "后端落地 IP: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP为空${gl_bai}" && return 1
-    read -e -p "后端落地端口 (如 8443): " bport; check_port "$bport" || return 1
+    
+    if select_server; then
+        local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+    else
+        read -e -p "后端落地 IP: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP为空${gl_bai}" && return 1
+        read -e -p "后端落地端口: " bport; check_port "$bport" || return 1
+    fi
+    
     read -e -p "Hysteria2 密码: " pass; [[ -z "$pass" ]] && echo -e "${gl_red}密码必填${gl_bai}" && return 1
-    read -e -p "伪装域名 (SNI, 如 example.com): " sni; [[ -z "$sni" ]] && echo -e "${gl_red}Hy2协议强烈建议填写伪装域名${gl_bai}"
-    echo -e "${gl_hui}提示: 基于 UDP，请确保防火墙已放行本机端口 ${port} 的 UDP！${gl_bai}"
+    read -e -p "伪装域名 (SNI): " sni; [[ -z "$sni" ]] && echo -e "${gl_red}Hy2强烈建议填写SNI${gl_bai}"
+    echo -e "${gl_hui}提示: 基于 UDP，请确保防火墙已放行本机 ${port} 端口的 UDP！${gl_bai}"
 
     jq --arg type "hysteria2" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
        --arg pass "$pass" --arg sni "${sni:-""}" \
@@ -195,13 +318,31 @@ add_hysteria2() {
     echo -e "${gl_lv}✅ Hysteria 2 节点添加成功${gl_bai}"
 }
 
+add_direct() {
+    echo -e "\n--- 纯端口转发节点配置 ---"
+    read -e -p "本机监听端口: " port; check_port "$port" || return 1
+    
+    if select_server; then
+        local ip="$SERVER_IP"; local bport="$SERVER_PORT"
+    else
+        read -e -p "后端目标 IP: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}IP为空${gl_bai}" && return 1
+        read -e -p "后端目标端口: " bport; check_port "$bport" || return 1
+    fi
+
+    jq --arg type "direct" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" \
+       '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport}]' \
+       "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+       
+    echo -e "${gl_lv}✅ 纯转发节点添加成功${gl_bai}"
+}
+
 # ============================================================================
 # 查看与删除
 # ============================================================================
 
 view_rules() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
-    echo -e "${gl_huang}       当前节点列表${gl_bai}"
+    echo -e "${gl_huang}       当前中转节点列表${gl_bai}"
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
     local count=$(jq 'length' "$RULES_JSON")
     if [ "$count" -eq 0 ]; then echo -e "${gl_hui}暂无节点${gl_bai}"; return 0; fi
@@ -215,9 +356,10 @@ view_rules() {
         local path=$(jq -r ".[$i].path" "$RULES_JSON")
         
         case $type in
-            vless-reality) local info="VLESS+Reality [${sni}] -> ${ip}:${bport}" ;;
-            hysteria2) local info="Hysteria2 (UDP) [${sni}] -> ${ip}:${bport}" ;;
-            argo-vless-ws) local info="Argo+VLESS+WS [${path}] -> ${ip}:${bport}" ;;
+            vless-reality) local info="Reality [${sni}] -> ${ip}:${bport}" ;;
+            hysteria2) local info="Hy2 (UDP) [${sni}] -> ${ip}:${bport}" ;;
+            argo-vless-ws) local info="Argo+WS [${path}] -> ${ip}:${bport}" ;;
+            direct) local info="纯转发 -> ${ip}:${bport}" ;;
             *) local info="未知 -> ${ip}:${bport}" ;;
         esac
         printf "${gl_lv}[%d] 端口:%-6s %s${gl_bai}\n" "$i" "$port" "$info"
@@ -289,6 +431,16 @@ build_json() {
                         tls: { enabled: true, server_name: $rule.sni, insecure: true }
                     }]')
                 ;;
+                
+            direct)
+                # 纯转发使用最高效的 override
+                json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" --argjson rule "$rule" \
+                    '.inbounds += [{
+                        type: "direct", tag: $tag, listen:"::", listen_port: $p,
+                        override_address: $rule.server, override_port: $rule.server_port
+                    }]')
+                continue # 纯转发跳出路由拼接
+                ;;
         esac
         
         json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" \
@@ -324,7 +476,7 @@ apply_config() {
 }
 
 # ============================================================================
-# 主入口：极简一级菜单
+# 主入口
 # ============================================================================
 
 main_menu() {
