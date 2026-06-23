@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 多协议管理脚本 (终极防崩溃版：抛弃Shell截断，原生jq索引循环)
+# Sing-Box 多协议管理脚本 (终极防崩溃版：修复文件名拼写错误)
 # ============================================================================
 
 RULES_JSON="/etc/sing-box/sb-relay-rules.json"
@@ -20,13 +20,13 @@ check_env() {
     fi
     if ! command -v openssl >/dev/null 2>&1; then
         if command -v apt >/dev/null 2>&1; then apt-get install -y openssl -qq
-        elif command -v yum >/dev/null 2>&1; then yum install -y openssl -q; fi
+        elif command -v  yum >/dev/null 2>&1; then yum install -y openssl -q; fi
     fi
     mkdir -p /etc/sing-box
     [ ! -f "$SERVERS_LIST" ] && touch "$SERVERS_LIST"
     [ ! -f "$LINKS_FILE" ] && touch "$LINKS_FILE"
     
-    # 🌟 救命修复：如果 rules.json 被 shell 截断污染，自动清空它，防止卡死
+    # 救命修复：如果 rules.json 被 shell 截断污染，自动清空它
     if ! jq empty "$RULES_JSON" >/dev/null 2>&1; then
         echo "[]" > "$RULES_JSON"
     fi
@@ -153,7 +153,7 @@ add_hy2() {
     
     if [ "$m" == "1" ]; then
         local pass=$(openssl rand -base64 16)
-        [ ! -f "/etc/sing-box/hy2.crt" ] && openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/sing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=$sni" -days 3650 2>/dev/null
+        [ ! -f "/etc/sing-box/hy2.crt" ] && openssl req -x509 -nodes -newkey rsa:2048 -keyout /etc/singbing-box/hy2.key -out /etc/sing-box/hy2.crt -subj "/CN=$sni" -days 3650 2>/dev/null
         jq --arg p "$port" --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type":"hysteria2","port":$p|tonumber,"mode":"standalone","pass":"$pass","sni":"$sni"}]' \
            "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
@@ -162,9 +162,10 @@ add_hy2() {
         read -e -p "后端IP: " ip; [ -z "$ip" ] && return
         read -e -p "后端端口: " bp; [[ ! "$bp" =~ ^[0-9]+$ ]] && return
         read -e -p "密码: " pass; [ -z "$pass" ] && return
+        # 👇 修复点：这里之前把 ${gl_bai}.tmp 错写成了临时文件名，已修正为 ${RULES_JSON}.tmp
         jq --arg p "$port" --arg ip "$ip" --arg bp "$bp" --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type":"hysteria2","port":$p|tonumber,"mode":"relay","ip":"$ip","bp":$bp|tonumber,"pass":"$pass","sni":"$sni"}]' \
-           "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${gl_bai}.tmp" "$RULES_JSON"
+           "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
         echo -e "${gl_lv}✅ 中转规则添加成功${gl_bai}"
     fi
 }
@@ -266,13 +267,12 @@ del_node() {
 }
 
 # ============================================================================
-# 🌟 终极稳健引擎：彻底抛弃 shell 解析，改用纯 jq 索引循环 (绝不断裂)
+# 🌟 终极稳健引擎：纯原生 jq 索引循环 (绝不断裂)
 # ============================================================================
 
 apply_config() {
-    # 前置安全校验，防止 rules.json 已被污染导致死循环
     if ! jq empty "$RULES_JSON" >/dev/null 2>&1; then
-        echo -e "${gl_red}检测到节点配置被意外污染，已自动清空抢救！请重新添加节点。${gl_bai}"
+        echo -e "${gl_red}检测到节点配置被意外污染，已自动清空！请重新添加节点。${gl_bai}"
         echo "[]" > "$RULES_JSON"
         read -rs -n 1 -p "按任意键返回..."
         return
@@ -286,17 +286,16 @@ apply_config() {
     local json=$(jq -n '{log:{level:"error"},inbounds:[],outbounds:[{type:"direct",tag:"direct"}],route:{rules:[],final:"direct"}}')
     local count=$(jq 'length' "$RULES_JSON")
     
-    # 绝不使用 for row in $(jq -c)，改用索引循环，从根本上切断字符串截断风险
+    # 绝不使用 for row in，改用索引循环，从根本上切断字符串截断风险
     for ((i=0; i<count; i++)); do
         local type=$(jq -r ".[$i].type" "$RULES_JSON")
         local mode=$(jq -r ".[$i].mode" "$RULES_JSON")
         local port=$(jq -r ".[$i].port" "$RULES_JSON")
-        
         local in_tag="in-${port}"
         local out_tag="out-${port}"
         
         if [ "$type" == "vless-reality" ]; then
-            if [ "$mode" == "standalone" then
+            if [ "$mode" == "standalone" ]; then
                 json=$(echo "$json" | jq --argjson p "$port" --arg u "$(jq -r ".[$i].uuid" "$RULES_JSON")" --arg pk "$(jq -r ".[$i].priv_key" "$RULES_JSON")" --arg pub "$(jq -r ".[$i].pub_key" "$RULES_JSON")" --arg sid "$(jq -r ".[$i].sid" "$RULES_JSON")" --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" --arg fp "$(jq -r ".[$i].fp" "$RULES_JSON")" \
                 '.inbounds += [{
                     "type": "vless", "tag": $in_tag, "listen": "::", "listen_port": $p, "uuid": $u,
@@ -336,7 +335,7 @@ apply_config() {
             else
                 json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" --arg ip "$(jq -r ".[$i].ip" "$RULES_JSON")" --argjson bp "$(jq -r ".[$i].bp" "$RULES_JSON")" --arg pass "$(jq -r ".[$i].pass" "$RULES_JSON")" --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" \
                 '.inbounds += [{"type":"mixed","tag":$in_tag,"listen":"::","listen_port":$p}] | 
-                .outbounds += [{"type":"hysteria2","tag":$out_tag,"server":$ip,"server_port":$bp,"password":$pass,"tls":{"enabled":true,"server_name":$sni,"insecure":true}}]')
+                .outbounds += [{"type":"hysteria2","tag":$out_tag,"server":$ip,"server_port":$bp,"password":$pass,"tls":{"enabled":true,"server_name":$sni,"insecure":true}}])
                 json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{"inbound":[$in], "outbound":$out}]')
             fi
             
@@ -392,7 +391,7 @@ main_menu() {
     while true; do
         clear
         local r="${gl_red}未安装${gl_bai}" s="${gl_red}未运行${gl_bai}" b="${gl_red}未启用${gl_bai}"
-        if command -v sing-box >/dev/null 2>&1 || [ -f "/usr/local/bin/sing-box" ]; then
+        if command -v sing-box >/dev/null 2>/dev/null || [ -f "/usr/local/bin/sing-box" ]; then
             r="${gl_lv}已安装 ✅${gl_bai}"
             if systemctl is-active --quiet sing-box 2>/dev/null; then s="${gl_lv}运行中 ✅${gl_bai}"; else s="${gl_red}未运行${gl_bai}"; fi
             systemctl is-enabled sing-box --quiet 2>/dev/null && b="${gl_lv}已启用 ✅${gl_bai}"
