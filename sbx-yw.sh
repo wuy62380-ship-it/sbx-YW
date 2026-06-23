@@ -12,13 +12,15 @@
 #   7. Hysteria2 增加带宽参数
 #   8. 主菜单状态自动诊断 (未运行时显示报错原因)
 #   9. 端口限制解除 (仅提示, 不阻止添加)
-#  10. 节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
-#  11. 所有交互提示增加高亮色，read 提示符内嵌选项说明
-#  12. 【终杀】select_sni() 所有 echo 加 >&2，杜绝 $() 抓取菜单污染 SNI
-#  13. 【终杀】view_links() IP 为空强制手动输入，杜绝生成残缺链接
-#  14. 【终杀】get_public_ip() 改用国内无墙接口，彻底解决国内机器获取IP失败
-#  15. 【增强】SNI 优选加入 30+ 主流大厂域名，采用多线程并发测速 (秒出结果)
-#  16. 【增强】view_links() 改为静默写入文件后统一带序号输出，彻底解决Web终端吞链接
+#  10. 节点支持自定义备注名
+#  11. 所有交互提示增加高亮色
+#  12. select_sni() 杜绝 $() 抓取污染
+#  13. view_links() IP为空强制手动输入，防残缺链接
+#  14. get_public_ip() 改用国内无墙接口
+#  15. SNI 优选加入 30+ 主流域名，多线程并发测速
+#  16. view_links() 静默写入文件后统一输出，防Web终端吞链接
+#  17. 【新增】纯转发添加时自动提取已知后端IP供选择
+#  18. 【新增】节点列表直观显示路由走向 (如: -> 1.2.3.4:443)
 # ============================================================================
 
 set -u
@@ -102,12 +104,10 @@ check_port_warn() {
     local port="$1"
     local has_warn=0
     if jq -e --argjson p "$port" '.[].port == $p' "$RULES_JSON" >/dev/null 2>&1; then
-        echo -e "${gl_huang}提示: 端口 $port 已在节点列表中${gl_bai}"
-        has_warn=1
+        echo -e "${gl_huang}提示: 端口 $port 已在节点列表中${gl_bai}"; has_warn=1
     fi
     if ss -tlnup 2>/dev/null | grep -q ":${port} "; then
-        echo -e "${gl_huang}提示: 端口 $port 已有程序监听${gl_bai}"
-        has_warn=1
+        echo -e "${gl_huang}提示: 端口 $port 已有程序监听${gl_bai}"; has_warn=1
     fi
     [ "$has_warn" -eq 1 ] && echo -e "${gl_hui}(不限端口, 继续添加)${gl_bai}"
 }
@@ -129,20 +129,8 @@ select_sni() {
         1) echo "www.microsoft.com" ;;
         2)
             echo -e "${gl_huang}[并发测速中，约需3秒]...${gl_bai}" >&2
-            local domains=(
-                "aws.com" "bing.com" "snap.licdn.com" "devblogs.microsoft.com"
-                "cdn.bizibly.com" "www.apple.com" "ts1.tc.mm.bing.net"
-                "fpinit.itunes.apple.com" "go.microsoft.com" "catalog.gamepass.com"
-                "gray-config-prod.api.arc-cdn.net" "apps.mzstatic.com" "tag.demandbase.com"
-                "r.bing.com" "tag-logger.demandbase.com" "cdn-dynmedia-1.microsoft.com"
-                "services.digitaleast.mobi" "gray.video-player.arcpublishing.com"
-                "azure.microsoft.com" "beacon.gtv-pub.com" "amd.com" "www.joom.com"
-                "www.stengg.com" "www.wedgehr.com" "www.cerebrium.ai"
-                "www.nazhumi.cem" "cloudflare-ech.com" "www.microsoft.com"
-                "dl.google.com" "www.amazon.com"
-            )
-            local tmp_f="/tmp/sb_sni_test.$$"
-            > "$tmp_f"
+            local domains=("aws.com" "bing.com" "snap.licdn.com" "devblogs.microsoft.com" "cdn.bizibly.com" "www.apple.com" "ts1.tc.mm.bing.net" "fpinit.itunes.apple.com" "go.microsoft.com" "catalog.gamepass.com" "gray-config-prod.api.arc-cdn.net" "apps.mzstatic.com" "tag.demandbase.com" "r.bing.com" "tag-logger.demandbase.com" "cdn-dynmedia-1.microsoft.com" "services.digitaleast.mobi" "gray.video-player.arcpublishing.com" "azure.microsoft.com" "beacon.gtv-pub.com" "amd.com" "www.joom.com" "www.stengg.com" "www.wedgehr.com" "www.cerebrium.ai" "www.nazhumi.cem" "cloudflare-ech.com" "www.microsoft.com" "dl.google.com" "www.amazon.com")
+            local tmp_f="/tmp/sb_sni_test.$$"; > "$tmp_f"
             for d in "${domains[@]}"; do
                 ( n=$(curl -o /dev/null -s -w '%{time_connect}' --max-time 2 -4 "https://$d" 2>/dev/null | awk '{printf "%d",$1*1000}'); [ -n "$n" ] && echo "$n $d" >> "$tmp_f" ) &
             done
@@ -156,10 +144,7 @@ select_sni() {
             echo -e "${gl_lv}选用: $best_d (${best_t}ms)${gl_bai}" >&2
             echo "$best_d"
             ;;
-        3) 
-            read -e -p "$(echo -e "${gl_cyan}输入域名: ${gl_bai}")" s
-            echo "${s:-www.microsoft.com}" 
-            ;;
+        3) read -e -p "$(echo -e "${gl_cyan}输入域名: ${gl_bai}")" s; echo "${s:-www.microsoft.com}" ;;
         *) echo "www.microsoft.com" ;;
     esac
 }
@@ -182,8 +167,7 @@ uninstall_core() {
         systemctl stop sing-box 2>/dev/null; systemctl disable sing-box 2>/dev/null
         if command -v apt >/dev/null 2>&1; then apt-get remove -y sing-box 2>/dev/null
         elif command -v yum >/dev/null 2>&1; then yum remove -y sing-box 2>/dev/null; fi
-        rm -rf /etc/sing-box
-        echo -e "${gl_lv}已完全卸载${gl_bai}"
+        rm -rf /etc/sing-box; echo -e "${gl_lv}已完全卸载${gl_bai}"
     else echo -e "${gl_hui}已取消${gl_bai}"; fi
     read -rs -n 1 -p "按任意键返回..."
 }
@@ -200,7 +184,7 @@ add_node_menu() {
         echo -e "${gl_lv}1. VLESS + Reality      - 抗审查，无需证书${gl_bai}"
         echo -e "${gl_huang}2. Hysteria2            - 极速 QUIC 协议${gl_bai}"
         echo -e "${gl_kjlan}3. Argo + VLESS + WS    - 隐藏源IP${gl_bai}"
-        echo -e "${gl_hui}4. 纯端口转发 (TCP/UDP 穿透)${gl_bai}"
+        echo -e "${gl_bright}4. 纯端口转发 (TCP/UDP 透明中转) ★${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "${gl_bright}0. 返回主菜单${gl_bai}"
         echo -e "${gl_kjlan}========================================${gl_bai}"
@@ -351,44 +335,88 @@ add_argo() {
 }
 
 # ============================================================================
-# 添加纯端口转发
+# 【增强】添加纯端口转发 (自动提取已知后端IP供选择)
 # ============================================================================
 add_direct() {
-    echo -e "\n${gl_lan}--- 纯端口转发配置 ---${gl_bai}"
+    echo -e "\n${gl_lan}--- 纯端口转发 (透明中转) 配置 ---${gl_bai}"
     local port ip bp
     read -e -p "$(echo -e "${gl_cyan}本机监听端口: ${gl_bai}")" port; [[ ! "$port" =~ ^[0-9]+$ ]] && return
     check_port_warn "$port"
+    
     read -e -p "$(echo -e "${gl_cyan}节点备注名 (回车默认端口): ${gl_bai}")" name
     [ -z "$name" ] && name="Direct-$port"
-    read -e -p "$(echo -e "${gl_cyan}后端目标 IP: ${gl_bai}")" ip; [ -z "$ip" ] && return
+    
+    # 提取所有已知后端IP (从历史配置和现有的转发记录里抓)
+    local known_ips
+    known_ips=$(jq -r '[.[] | select(.mode=="relay" or .type=="direct") | .ip] | unique | .[]' "$RULES_JSON" 2>/dev/null | sort -u | grep -v '^$')
+    
+    if [ -n "$known_ips" ]; then
+        echo -e "${gl_huang}--- 选择后端目标 IP ---${gl_bai}"
+        local idx=1; declare -A ip_map
+        while IFS= read -r dip; do
+            ip_map[$idx]="$dip"
+            echo -e "${gl_lv}$idx. $dip${gl_bai}"
+            ((idx++))
+        done <<< "$known_ips"
+        echo -e "${gl_bright}0. 手动输入其他 IP${gl_bai}"
+        read -e -p "$(echo -e "${gl_cyan}请选择序号 (0-$((idx-1))): ${gl_bai}")" sel
+        if [[ "$sel" =~ ^[0-9]+$ ]] && [ "$sel" -gt 0 ] && [ -n "${ip_map[$sel]:-}" ]; then
+            ip="${ip_map[$sel]}"
+            echo -e "${gl_lv}已选择: $ip${gl_bai}"
+        else
+            read -e -p "$(echo -e "${gl_cyan}手动输入后端目标 IP: ${gl_bai}")" ip; [ -z "$ip" ] && return
+        fi
+    else
+        read -e -p "$(echo -e "${gl_cyan}后端目标 IP: ${gl_bai}")" ip; [ -z "$ip" ] && return
+    fi
+    
     read -e -p "$(echo -e "${gl_cyan}后端目标端口: ${gl_bai}")" bp; [[ ! "$bp" =~ ^[0-9]+$ ]] && return
+    
     jq -n --argjson p "$port" --arg name "$name" --arg ip "$ip" --argjson bp "$bp" \
           'input | . += [{"type":"direct","name":$name,"port":$p,"ip":$ip,"bp":$bp}]' \
           "$RULES_JSON" | safe_write_rules /dev/stdin
-    echo -e "${gl_lv}✅ 节点 [${name}] 添加成功${gl_bai}"
+    echo -e "${gl_lv}✅ 节点 [${name}] -> ${ip}:${bp} 添加成功${gl_bai}"
 }
 
 # ============================================================================
-# 查看节点列表
+# 【增强】查看节点列表 (直观显示路由走向)
 # ============================================================================
 view_nodes() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
     local count; count=$(jq 'length' "$RULES_JSON")
     if [ "$count" -eq 0 ]; then echo -e "${gl_hui}暂无节点${gl_bai}"; return; fi
     for ((i=0; i<count; i++)); do
-        local type mode port m_str name
+        local type mode port m_str name route_info=""
         type=$(jq -r ".[$i].type" "$RULES_JSON")
         mode=$(jq -r ".[$i].mode" "$RULES_JSON")
         port=$(jq -r ".[$i].port" "$RULES_JSON")
         name=$(jq -r ".[$i].name // \"未命名\"" "$RULES_JSON")
-        if [ "$mode" == "standalone" ]; then m_str="${gl_kjlan}[本机落地]${gl_bai}"
-        else m_str="${gl_hui}[中转]${gl_bai}"; fi
-        printf "${gl_lv}[%d] %-12s 端口: %-6s %-14s %s${gl_bai}\n" "$i" "$name" "$port" "$m_str" "$type"
+        
+        if [ "$mode" == "standalone" ]; then 
+            m_str="${gl_kjlan}[落地]${gl_bai}"
+        else
+            # 只要有转发行为，就提取目标IP和端口
+            local dip dbp
+            dip=$(jq -r ".[$i].ip // empty" "$RULES_JSON")
+            dbp=$(jq -r ".[$i].bp // empty" "$RULES_JSON")
+            
+            if [ "$type" == "direct" ]; then
+                m_str="${gl_huang}[转发]${gl_bai}"
+            else
+                m_str="${gl_hui}[中转]${gl_bai}"
+            fi
+            # 拼接路由走向提示
+            if [ -n "$dip" ] && [ -n "$dbp" ]; then
+                route_info=" ${gl_cyan}-> ${dip}:${dbp}${gl_bai}"
+            fi
+        fi
+        
+        printf "${gl_lv}[%d] %-10s 端口:%-6s %-8s %s%s${gl_bai}\n" "$i" "$name" "$port" "$m_str" "$type" "$route_info"
     done
 }
 
 # ============================================================================
-# 【增强】查看一键导入链接 (先静默写文件，最后统一带序号输出，防Web终端吞文本)
+# 查看一键导入链接 (静默写文件后统一输出)
 # ============================================================================
 view_links() {
     > "$LINKS_FILE"
@@ -398,13 +426,11 @@ view_links() {
         echo -e "${gl_red}自动获取公网IP失败！${gl_bai}"
         read -e -p "$(echo -e "${gl_cyan}请手动输入服务器IP: ${gl_bai}")" ip
         if ! [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo -e "${gl_red}IP格式错误，无法生成链接${gl_bai}"
-            read -rs -n 1 -p "按任意键返回..."; return
+            echo -e "${gl_red}IP格式错误，无法生成链接${gl_bai}"; read -rs -n 1 -p "按任意键返回..."; return
         fi
     fi
 
     local count; count=$(jq 'length' "$RULES_JSON")
-    # 1. 安静循环：只生成纯净链接写入文件，不往屏幕吐字
     for ((i=0; i<count; i++)); do
         local mode type link name
         mode=$(jq -r ".[$i].mode" "$RULES_JSON")
@@ -416,60 +442,35 @@ view_links() {
         case "$type" in
             vless-reality)
                 local uuid port sni fp pub sid
-                uuid=$(jq -r ".[$i].uuid" "$RULES_JSON")
-                port=$(jq -r ".[$i].port" "$RULES_JSON")
-                sni=$(jq -r ".[$i].sni" "$RULES_JSON")
-                fp=$(jq -r ".[$i].fp" "$RULES_JSON")
-                pub=$(jq -r ".[$i].pub_key" "$RULES_JSON")
-                sid=$(jq -r ".[$i].sid" "$RULES_JSON")
-                link="vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(url_encode "$sni")&fp=$(url_encode "$fp")&pbk=$(url_encode "$pub")&sid=$(url_encode "$sid")&type=tcp#$(url_encode "$name")"
-                ;;
+                uuid=$(jq -r ".[$i].uuid" "$RULES_JSON"); port=$(jq -r ".[$i].port" "$RULES_JSON")
+                sni=$(jq -r ".[$i].sni" "$RULES_JSON"); fp=$(jq -r ".[$i].fp" "$RULES_JSON")
+                pub=$(jq -r ".[$i].pub_key" "$RULES_JSON"); sid=$(jq -r ".[$i].sid" "$RULES_JSON")
+                link="vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$(url_encode "$sni")&fp=$(url_encode "$fp")&pbk=$(url_encode "$pub")&sid=$(url_encode "$sid")&type=tcp#$(url_encode "$name")" ;;
             hysteria2)
                 local pass sni port
-                port=$(jq -r ".[$i].port" "$RULES_JSON")
-                pass=$(jq -r ".[$i].pass" "$RULES_JSON")
-                sni=$(jq -r ".[$i].sni" "$RULES_JSON")
+                port=$(jq -r ".[$i].port" "$RULES_JSON"); pass=$(jq -r ".[$i].pass" "$RULES_JSON"); sni=$(jq -r ".[$i].sni" "$RULES_JSON")
                 if [ -n "$pass" ]; then link="hysteria2://${pass}@${ip}:${port}?insecure=1&sni=$(url_encode "$sni")#$(url_encode "$name")"
-                else link="hysteria2://${ip}:${port}?insecure=1&sni=$(url_encode "$sni")#$(url_encode "$name")"; fi
-                ;;
+                else link="hysteria2://${ip}:${port}?insecure=1&sni=$(url_encode "$sni")#$(url_encode "$name")"; fi ;;
             argo)
                 local uuid path domain port
-                port=$(jq -r ".[$i].port" "$RULES_JSON")
-                uuid=$(jq -r ".[$i].uuid" "$RULES_JSON")
-                path=$(jq -r ".[$i].path" "$RULES_JSON")
-                domain=$(jq -r ".[$i].domain" "$RULES_JSON")
-                if [ -n "$domain" ]; then
-                    link="vless://${uuid}@${domain}:443?encryption=none&security=tls&type=ws&path=$(url_encode "$path")#$(url_encode "$name")"
-                fi
-                ;;
+                port=$(jq -r ".[$i].port" "$RULES_JSON"); uuid=$(jq -r ".[$i].uuid" "$RULES_JSON")
+                path=$(jq -r ".[$i].path" "$RULES_JSON"); domain=$(jq -r ".[$i].domain" "$RULES_JSON")
+                if [ -n "$domain" ]; then link="vless://${uuid}@${domain}:443?encryption=none&security=tls&type=ws&path=$(url_encode "$path")#$(url_encode "$name")"; fi ;;
         esac
-
-        if [ -n "$link" ]; then
-            echo "$link" >> "$LINKS_FILE"
-            has=1
-        fi
+        if [ -n "$link" ]; then echo "$link" >> "$LINKS_FILE"; has=1; fi
     done
 
-    # 2. 统一界面输出 (带序号，彻底防吞)
-    local total=$(wc -l < "$LINKS_FILE" 2>/dev/null | tr -d ' ')
-    [ -z "$total" ] && total=0
-    
+    local total=$(wc -l < "$LINKS_FILE" 2>/dev/null | tr -d ' '); [ -z "$total" ] && total=0
     echo -e "${gl_kjlan}========================================${gl_bai}"
     echo -e "       客户端一键导入链接 (共 ${gl_lv}${total}${gl_bai} 条)"
     echo -e "       服务器IP: ${gl_lv}${ip}${gl_bai}"
     echo -e "${gl_kjlan}========================================${gl_bai}"
-
-    if [ "$has" -eq 0 ]; then
-        echo -e "${gl_hui}暂无可用链接，请先添加【本机直接落地】节点。${gl_bai}"
+    if [ "$has" -eq 0 ]; then echo -e "${gl_hui}暂无可用链接，请先添加【本机直接落地】节点。${gl_bai}"
     else
         local idx=1
-        while IFS= read -r line; do
-            echo -e "${gl_lv}[$idx] ${gl_kjlan}${line}${gl_bai}"
-            ((idx++))
-        done < "$LINKS_FILE"
+        while IFS= read -r line; do echo -e "${gl_lv}[$idx] ${gl_kjlan}${line}${gl_bai}"; ((idx++)); done < "$LINKS_FILE"
         echo -e "----------------------------------------"
-        echo -e "${gl_hui}如界面显示不全，请查看纯净文件:${gl_bai}"
-        echo -e "${gl_cyan}cat ${LINKS_FILE}${gl_bai}"
+        echo -e "${gl_hui}如界面显示不全，请查看纯净文件:${gl_bai} ${gl_cyan}cat ${LINKS_FILE}${gl_bai}"
     fi
     echo -e "${gl_kjlan}========================================${gl_bai}"
 }
@@ -499,13 +500,10 @@ del_node_inline() {
 # ============================================================================
 apply_config() {
     if ! jq empty "$RULES_JSON" >/dev/null 2>&1; then
-        echo -e "${gl_red}检测到节点配置被污染，已自动清空！请重新添加节点。${gl_bai}"
-        echo "[]" > "$RULES_JSON"; read -rs -n 1 -p "按任意键返回..."; return
+        echo -e "${gl_red}检测到节点配置被污染，已自动清空！${gl_bai}"; echo "[]" > "$RULES_JSON"; read -rs -n 1 -p "按任意键返回..."; return
     fi
     local count; count=$(jq 'length' "$RULES_JSON")
-    if [ "$count" -eq 0 ]; then
-        echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; read -rs -n 1 -p "按任意键返回..."; return
-    fi
+    if [ "$count" -eq 0 ]; then echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; read -rs -n 1 -p "按任意键返回..."; return; fi
 
     local sb_ver ver_num ver_major ver_minor; sb_ver=$(get_sb_version)
     if [ -n "$sb_ver" ]; then
@@ -520,8 +518,7 @@ apply_config() {
 
     if [ -f "$CONF_FILE" ]; then
         local bak_name="config_$(date +%Y%m%d_%H%M%S).json"
-        cp "$CONF_FILE" "${BAK_DIR}/${bak_name}"
-        echo -e "${gl_hui}旧配置已备份: ${BAK_DIR}/${bak_name}${gl_bai}"
+        cp "$CONF_FILE" "${BAK_DIR}/${bak_name}"; echo -e "${gl_hui}旧配置已备份: ${BAK_DIR}/${bak_name}${gl_bai}"
     fi
 
     echo -e "${gl_lv}[1/3] 正在生成 JSON...${gl_bai}"
