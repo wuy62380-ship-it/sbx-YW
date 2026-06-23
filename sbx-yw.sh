@@ -111,30 +111,29 @@ safe_write_rules() {
 # SNI 选择 (终杀版: 双重保险)
 # ============================================================================
 select_sni() {
-    echo -e "${gl_huang}--- 伪装域名 (SNI) 设置 ---${gl_bai}"
-    echo -e "${gl_lv}1. 使用默认伪装域名${gl_bai}"
-    echo -e "${gl_lv}2. 自动优选最佳域名${gl_bai}"
-    echo -e "${gl_lv}3. 手动输入域名${gl_bai}"
-    # 【关键】把选项写在 read 提示符里，防止上面的 echo 被垃圾终端吞掉
+    echo -e "${gl_huang}--- 伪装域名 (SNI) 设置 ---${gl_bai}" >&2
+    echo -e "${gl_lv}1. 使用默认伪装域名${gl_bai}" >&2
+    echo -e "${gl_lv}2. 自动优选最佳域名${gl_bai}" >&2
+    echo -e "${gl_lv}3. 手动输入域名${gl_bai}" >&2
     read -e -p "$(echo -e "${gl_cyan}请选择 (1默认 / 2优选 / 3手动): ${gl_bai}")" c
     case $c in
-        1) echo "www.microsoft.com" ;;
+        1) echo "www.microsoft.com" ;;   # 注意这行不要加 >&2
         2)
-            echo -e "${gl_huang}[测试中]...${gl_bai}"
+            echo -e "${gl_huang}[测试中]...${gl_bai}" >&2
             local d="www.microsoft.com" t=9999
             for i in "www.apple.com" "dl.google.com" "www.amazon.com" "www.microsoft.com"; do
                 local n
                 n=$(curl -o /dev/null -s -w '%{time_connect}' --max-time 3 -4 "https://$i" 2>/dev/null | awk '{printf "%d",$1*1000}')
                 [ -n "$n" ] && [ "$n" -lt "$t" ] && t=$n d=$i
             done
-            echo -e "${gl_lv}选用: $d (${t}ms)${gl_bai}"
-            echo "$d"
+            echo -e "${gl_lv}选用: $d (${t}ms)${gl_bai}" >&2
+            echo "$d"   # 注意这行不要加 >&2
             ;;
         3) 
             read -e -p "$(echo -e "${gl_cyan}输入域名: ${gl_bai}")" s
-            echo "${s:-www.microsoft.com}" 
+            echo "${s:-www.microsoft.com}"   # 注意这行不要加 >&2
             ;;
-        *) echo "www.microsoft.com" ;;
+        *) echo "www.microsoft.com" ;;   # 注意这行不要加 >&2
     esac
 }
 
