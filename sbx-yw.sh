@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 多协议中转管理脚本 (落地机池实战版)
-# 支持: 预设落地机 / 协议中转 / 纯端口穿透
+# Sing-Box 多协议中转管理脚本 (支持本机直连模式)
 # ============================================================================
 
 # --- 颜色定义 ---
@@ -83,12 +82,12 @@ node_manager_menu() {
         echo -e "${gl_kjlan}========================================${gl_bai}"
         echo -e "${gl_kjlan}             节 点 管 理                 "
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        echo -e "服务状态: ${status}  |  中转节点: ${gl_lv}${count}${gl_bai} 个  |  落地机: ${gl_lv}${server_count}${gl_bai} 台"
+        echo -e "服务状态: ${status}  |  节点数量: ${gl_lv}${count}${gl_bai} 个  |  预设落地机: ${gl_lv}${server_count}${gl_bai} 台"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}1. 添加节点 (选择模式与协议)${gl_bai}"
-        echo -e "${gl_huang}2. 落地机管理 (预设后端服务器) ${gl_huang}★${gl_bai}"
+        echo -e "${gl_huang}2. 落地机管理 (预设外部服务器)${gl_bai}"
         echo -e "----------------------------------------"
-        echo -e "3. 查看当前中转节点"
+        echo -e "3. 查看当前节点列表"
         echo -e "${gl_red}4. 删除指定节点${gl_bai}"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}5. 🧨 校验并应用配置 (热重载) ${gl_huang}★${gl_bai}"
@@ -122,7 +121,7 @@ manage_servers() {
         echo -e "${gl_huang}========================================${gl_bai}"
         echo -e "${gl_huang}             落 地 机 管 理               "
         echo -e "${gl_huang}========================================${gl_bai}"
-        echo -e "当前已预设: ${gl_lv}${count}${gl_bai} 台落地机"
+        echo -e "当前已预设: ${gl_lv}${count}${gl_bai} 台外部落地机"
         echo -e "----------------------------------------"
         echo -e "${gl_lv}1. 添加落地机 (名称 IP 端口)${gl_bai}"
         echo -e "${gl_huang}2. 查看落地机列表${gl_bai}"
@@ -168,19 +167,20 @@ manage_servers() {
 }
 
 # ============================================================================
-# 核心黑科技：强制二选一选择落地机 (修复交互逻辑)
+# 核心黑科技：三种模式选择器 (预设/手动/本机直连)
 # ============================================================================
 
 SERVER_IP=""
 SERVER_PORT=""
 select_server() {
     echo -e "\n----------------------------------------"
-    echo -e "${gl_huang}请选择后端落地机获取方式:${gl_bai}"
+    echo -e "${gl_huang}请选择后端获取方式:${gl_bai}"
     echo -e "----------------------------------------"
-    echo -e "${gl_lv}1. 从预设落地机列表选择${gl_bai}"
-    echo -e "${gl_hui}2. 手动输入 IP 和 端口${gl_bai}"
+    echo -e "${gl_lv}1. 从预设列表选择外部落地机${gl_bai}"
+    echo -e "${gl_hui}2. 手动输入外部 IP 和端口${gl_bai}"
+    echo -e "${gl_kjlan}3. 不用落地机 (本机直连 127.0.0.1)${gl_bai}"
     echo -e "----------------------------------------"
-    read -e -p "请选择 (1 或 2): " s_choice
+    read -e -p "请选择 (1/2/3): " s_choice
     
     if [ "$s_choice" == "1" ]; then
         local count=$(grep -vE '^$|#' "$SERVERS_LIST" | wc -l)
@@ -204,15 +204,26 @@ select_server() {
         if [[ "$s_idx" =~ ^[0-9]+$ ]] && [ "$s_idx" -ge 1 ] && [ "$s_idx" -lt "$idx" ]; then
             SERVER_IP=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_idx}p" | awk '{print $2}')
             SERVER_PORT=$(grep -vE '^$|#' "$SERVERS_LIST" | sed -n "${s_idx}p" | awk '{print $3}')
-            echo -e "${gl_lv}✅ 已选择预设: ${SERVER_IP}:${SERVER_PORT}${gl_bai}"
+            echo -e "${gl_lv}✅ 已选择外部落地机: ${SERVER_IP}:${SERVER_PORT}${gl_bai}"
             return 0
         else
-            echo -e "${gl_red}输入无效！已自动切换为手动输入模式...${gl_bai}"
+            echo -e "${gl_red}输入无效！已自动切换为手动输入...${gl_bai}"
             sleep 1
             return 1
         fi
+        
+    elif [ "$s_choice" == "3" ]; then
+        # 核心：不用落地机的本质就是 127.0.0.1 回环
+        SERVER_IP="127.0.0.1"
+        read -e -p "请输入本机监听的端口 (如 443): " SERVER_PORT
+        if ! [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] || [ "$SERVER_PORT" -lt 1 ] || [ "$SERVER_PORT" -gt 65535 ]; then
+            echo -e "${gl_red}端口错误${gl_bai}"; return 1
+        fi
+        echo -e "${gl_kjlan}✅ 已设置为本机直连模式 (127.0.0.1:${SERVER_PORT})${gl_bai}"
+        return 0
+        
     else
-        # 只有用户明确选 2 才走手动，选其他一律算作选 2 处理
+        # 选 2 或者乱填，都走手动
         echo -e "${gl_hui}已切换为手动输入模式...${gl_bai}"
         return 1
     fi
@@ -265,7 +276,7 @@ add_node_selector() {
 }
 
 # ============================================================================
-# 协议参数收集器 (已集成严格的落地机二选一)
+# 协议参数收集器 (已集成三种选择模式)
 # ============================================================================
 
 check_port() {
@@ -277,7 +288,7 @@ add_reality() {
     echo -e "\n--- VLESS + Reality 节点配置 ---"
     read -e -p "本机监听端口: " port; check_port "$port" || return 1
     
-    # 强制二选一：选预设还是手动
+    # 三选一
     if select_server; then
         local ip="$SERVER_IP"; local bport="$SERVER_PORT"
     else
@@ -305,12 +316,12 @@ add_argo_vless_ws() {
     if select_server; then
         local ip="$SERVER_IP"; local bport="$SERVER_PORT"
     else
-        read -e -p "后端落地 IP/域名: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}必填${gl_bai}" && return 1
-        read -e -p "后端落地端口: " bport; check_port "$bport" || return 1
+        read -e -p "后端 IP/域名: " ip; [[ -z "$ip" ]] && echo -e "${gl_red}必填${gl_bai}" && return 1
+        read -e -p "后端端口: " bport; check_port "$bport" || return 1
     fi
     
     read -e -p "WebSocket 路径 (如 /ray): " path; [[ -z "$path" ]] && path="/"
-    echo -e "${gl_hui}提示: 中转机默认不启用TLS(由后端CF处理)。${gl_bai}"
+    echo -e "${gl_hui}提示: 中转机默认不启用TLS(由后端或CF处理)。${gl_bai}"
 
     jq --arg type "argo-vless-ws" --argjson port "$port" --arg ip "$ip" --argjson bport "$bport" --arg path "$path" \
        '. += [{"type": $type, "listen_port": $port, "server": $ip, "server_port": $bport, "path": $path}]' \
@@ -366,7 +377,7 @@ add_direct() {
 
 view_rules() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
-    echo -e "${gl_huang}       当前中转节点列表${gl_bai}"
+    echo -e "${gl_huang}       当前节点列表${gl_bai}"
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
     local count=$(jq 'length' "$RULES_JSON")
     if [ "$count" -eq 0 ]; then echo -e "${gl_hui}暂无节点${gl_bai}"; return 0; fi
@@ -379,12 +390,19 @@ view_rules() {
         local sni=$(jq -r ".[$i].sni" "$RULES_JSON")
         local path=$(jq -r ".[$i].path" "$RULES_JSON")
         
+        # 如果是 127.0.0.1，显示为“本机直连”
+        if [ "$ip" == "127.0.0.1" ]; then
+            local display_ip="${gl_kjlan}本机直连 (127.0.0.1)${gl_bai}:${bport}"
+        else
+            local display_ip="${ip}:${bport}"
+        fi
+
         case $type in
-            vless-reality) local info="Reality [${sni}] -> ${ip}:${bport}" ;;
-            hysteria2) local info="Hy2 (UDP) [${sni}] -> ${ip}:${bport}" ;;
-            argo-vless-ws) local info="Argo+WS [${path}] -> ${ip}:${bport}" ;;
-            direct) local info="纯转发 -> ${ip}:${bport}" ;;
-            *) local info="未知 -> ${ip}:${bport}" ;;
+            vless-reality) local info="Reality [${sni}] -> ${display_ip}" ;;
+            hysteria2) local info="Hy2 (UDP) [${sni}] -> ${display_ip}" ;;
+            argo-vless-ws) local info="Argo+WS [${path}] -> ${display_ip}" ;;
+            direct) local info="纯转发 -> ${display_ip}" ;;
+            *) local info="未知 -> ${display_ip}" ;;
         esac
         printf "${gl_lv}[%d] 端口:%-6s %s${gl_bai}\n" "$i" "$port" "$info"
     done
@@ -474,7 +492,7 @@ build_json() {
 }
 
 apply_config() {
-    if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then
+    if [ $(jq 'length" "$RULES_JSON") -eq 0 ]; then
         echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; return 1
     fi
     echo -e "${gl_lv}[1/3] 正在生成多协议 JSON...${gl_bai}"
