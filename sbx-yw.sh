@@ -1,6 +1,6 @@
-#!/usr/bin/env/bash
+#!/usr/bin/env bash
 # ============================================================================
-# Sing-Box 全自动管理脚本 (终极稳定闭环版：完美适配 1.8 - 1.13+)
+# Sing-Box 多协议管理脚本 (终极防崩溃版：抛弃Shell截断，原生jq索引循环)
 # ============================================================================
 
 RULES_JSON="/etc/sing-box/sb-relay-rules.json"
@@ -9,7 +9,6 @@ CONF_FILE="/etc/sing-box/config.json"
 TMP_FILE="/tmp/sb-relay-tmp.json"
 LINKS_FILE="/etc/sing-box/client_links.txt"
 
-# --- 颜色定义 ---
 : "${gl_bai:=\033[0m}" "${gl_lv:=\033[32m}" "${gl_huang:=\033[33m}" "${gl_hui:=\033[90m}" "${gl_red:=\033[31m}" "${gl_kjlan:=\033[32m}" "${gl_lan:=\033[34m}"
 
 check_env() {
@@ -24,14 +23,17 @@ check_env() {
         elif command -v yum >/dev/null 2>&1; then yum install -y openssl -q; fi
     fi
     mkdir -p /etc/sing-box
-    [ ! -f "$RULES_JSON" ] && echo '[]' > "$RULES_JSON"
     [ ! -f "$SERVERS_LIST" ] && touch "$SERVERS_LIST"
     [ ! -f "$LINKS_FILE" ] && touch "$LINKS_FILE"
+    
+    # 🌟 救命修复：如果 rules.json 被 shell 截断污染，自动清空它，防止卡死
+    if ! jq empty "$RULES_JSON" >/dev/null 2>&1; then
+        echo "[]" > "$RULES_JSON"
+    fi
 }
 
 url_encode() { echo -n "$1" | jq -sRr @uri; }
 
-# 纯文本防吞字 SNI 选择器
 select_sni() {
     echo ""
     echo "--- 伪装域名 (SNI) 设置 ---"
@@ -55,9 +57,6 @@ select_sni() {
     esac
 }
 
-# ============================================================================
-# 模块 1：安装核心
-# ============================================================================
 install_core() {
     echo -e "${gl_huang}正在连接官方源安装...${gl_bai}"
     if command -v apt >/dev/null 2>&1; then curl -fsSL https://sing-box.app/deb-install.sh | bash
@@ -66,9 +65,6 @@ install_core() {
     read -rs -n 1 -p "按任意键返回..."
 }
 
-# ============================================================================
-# 模块 2：添加节点 (有闭环逻辑)
-# ============================================================================
 add_node_menu() {
     while true; do
         clear
@@ -91,7 +87,6 @@ add_node_menu() {
             0|"") break ;;
             *) echo -e "${gl_red}无效选择${gl_bai}"; sleep 1 ;;
         esac
-        # 每次执行完添加逻辑后，暂停等待用户确认，防止脚本直接退出
         read -rs -n 1 -p "按任意键继续..."
     done
 }
@@ -169,7 +164,7 @@ add_hy2() {
         read -e -p "密码: " pass; [ -z "$pass" ] && return
         jq --arg p "$port" --arg ip "$ip" --arg bp "$bp" --arg pass "$pass" --arg sni "$sni" \
            '. += [{"type":"hysteria2","port":$p|tonumber,"mode":"relay","ip":"$ip","bp":$bp|tonumber,"pass":"$pass","sni":"$sni"}]' \
-           "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${RULES_JSON}.tmp" "$RULES_JSON"
+           "$RULES_JSON" > "${RULES_JSON}.tmp" && mv "${gl_bai}.tmp" "$RULES_JSON"
         echo -e "${gl_lv}✅ 中转规则添加成功${gl_bai}"
     fi
 }
@@ -211,9 +206,6 @@ add_direct() {
     echo -e "${gl_lv}✅ 纯转发节点添加成功${gl_bai}"
 }
 
-# ============================================================================
-# 模块 3：查看与删除 (有闭环逻辑)
-# ============================================================================
 view_nodes() {
     echo -e "${gl_huang}----------------------------------------${gl_bai}"
     local count=$(jq 'length' "$RULES_JSON")
@@ -274,86 +266,94 @@ del_node() {
 }
 
 # ============================================================================
-# 模块 4：配置生成引擎 (严格适配 1.8 - 1.13+)
+# 🌟 终极稳健引擎：彻底抛弃 shell 解析，改用纯 jq 索引循环 (绝不断裂)
 # ============================================================================
+
 apply_config() {
+    # 前置安全校验，防止 rules.json 已被污染导致死循环
+    if ! jq empty "$RULES_JSON" >/dev/null 2>&1; then
+        echo -e "${gl_red}检测到节点配置被意外污染，已自动清空抢救！请重新添加节点。${gl_bai}"
+        echo "[]" > "$RULES_JSON"
+        read -rs -n 1 -p "按任意键返回..."
+        return
+    fi
+
     if [ $(jq 'length' "$RULES_JSON") -eq 0 ]; then
         echo -e "${gl_red}错误：节点列表为空！${gl_bai}"; read -rs -n 1 -p "按任意键返回..."; return
     fi
     
-    echo -e "${gl_lv}[1/3] 正在生成 JSON (兼容 1.8+ 语法)...${gl_bai}"
+    echo -e "${gl_lv}[1/3] 正在生成 JSON (纯原生jq引擎，杜绝断字)...${gl_bai}"
     local json=$(jq -n '{log:{level:"error"},inbounds:[],outbounds:[{type:"direct",tag:"direct"}],route:{rules:[],final:"direct"}}')
+    local count=$(jq 'length' "$RULES_JSON")
     
-    for row in $(jq -c '.[]' "$RULES_JSON"); do
-        local t=$(echo "$row" | jq -r '.type')
-        local m=$(echo "$row" | jq -r '.mode')
-        local p=$(echo "$row" | jq -r '.port')
+    # 绝不使用 for row in $(jq -c)，改用索引循环，从根本上切断字符串截断风险
+    for ((i=0; i<count; i++)); do
+        local type=$(jq -r ".[$i].type" "$RULES_JSON")
+        local mode=$(jq -r ".[$i].mode" "$RULES_JSON")
+        local port=$(jq -r ".[$i].port" "$RULES_JSON")
         
-        if [ "$t" == "vless-reality" ]; then
-            if [ "$m" == "standalone" ]; then
-                # 🌟 1.8+ 核心修复：reality 与 tls 必须平级，short_id 不能为空数组
-                json=$(echo "$json" | jq --argjson r "$row" \
+        local in_tag="in-${port}"
+        local out_tag="out-${port}"
+        
+        if [ "$type" == "vless-reality" ]; then
+            if [ "$mode" == "standalone" then
+                json=$(echo "$json" | jq --argjson p "$port" --arg u "$(jq -r ".[$i].uuid" "$RULES_JSON")" --arg pk "$(jq -r ".[$i].priv_key" "$RULES_JSON")" --arg pub "$(jq -r ".[$i].pub_key" "$RULES_JSON")" --arg sid "$(jq -r ".[$i].sid" "$RULES_JSON")" --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" --arg fp "$(jq -r ".[$i].fp" "$RULES_JSON")" \
                 '.inbounds += [{
-                    "type": "vless", "tag": ("in-" + ($r.port|tostring)),
-                    "listen": "::", "listen_port": $r.port, "uuid": $r.uuid,
+                    "type": "vless", "tag": $in_tag, "listen": "::", "listen_port": $p, "uuid": $u,
                     "tls": {
-                        "enabled": true, "server_name": $r.sni,
-                        "utls": {"enabled": true, "fingerprint": $r.fp}
+                        "enabled": true, "server_name": $sni, "utls": {"enabled": true, "fingerprint": $fp}
                     },
                     "reality": {
-                        "enabled": true, "private_key": $r.priv_key
-                    } + if $r.sid != "" then {"short_id": [$r.sid]} else {} end
+                        "enabled": true, "private_key": $pk
+                    } + (if $sid != "" then {"short_id": [$sid]} else {} end)
                 }]')
             else
-                json=$(echo "$json" | jq --argjson r "$row" \
-                '.inbounds += [{"type":"mixed","tag":("in-"+($r.port|tostring)),"listen":"::","listen_port":$r.port}] | 
+                json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" --arg ip "$(jq -r ".[$i].ip" "$RULES_JSON")" --argjson bp "$(jq -r ".[$i].bp" "$RULES_JSON")" --arg pub "$(jq -r ".[$i].pub_key" "$RULES_JSON")" --arg sid "$(jq -r ".[$i].sid" "$RULES_JSON")" --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" --arg fp "$(jq -r ".[$i].fp" "$RULES_JSON")" \
+                '.inbounds += [{"type":"mixed","tag":$in_tag,"listen":"::","listen_port":$p}] | 
                 .outbounds += [{
-                    "type": "vless", "tag": ("out-"+($r.port|tostring)),
-                    "server": $r.ip, "server_port": $r.bp,
+                    "type": "vless", "tag": $out_tag, "server": $ip, "server_port": $bp,
                     "uuid": "00000000-0000-0000-0000-000000000000", "flow": "xtls-rprx-vision",
                     "tls": {
-                        "enabled": true, "server_name": $r.sni,
-                        "utls": {"enabled": true, "fingerprint": $r.fp}
+                        "enabled": true, "server_name": $sni, "utls": {"enabled": true, "fingerprint": $fp}
                     },
                     "reality": {
-                        "enabled": true, "public_key": $r.pub_key
-                    } + if $r.sid != "" then {"short_id": $r.sid} else {} end
-                }] |
-                .route.rules += [{"inbound":[("in-"+($r.port|tostring)),"outbound":("out-"+($r.port|tostring))}]')
+                        "enabled": true, "public_key": $pub
+                    } + (if $sid != "" then {"short_id": $sid} else {} end)
+                }]')
+                json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{"inbound":[$in], "outbound":$out}]')
             fi
             
-        elif [ "$t" == "hysteria2" ]; then
-            if [ "$m" == "standalone" ]; then
-                json=$(echo "$json" | jq --argjson r "$row" \
+        elif [ "$type" == "hysteria2" ]; then
+            if [ "$mode" == "standalone" ]; then
+                json=$(echo "$json" | jq --argjson p "$port" --arg pass "$(jq -r ".[$i].pass" "$RULES_JSON")" --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" \
                 '.inbounds += [{
-                    "type": "hysteria2", "tag": ("in-" + ($r.port|tostring)),
-                    "listen": "::", "listen_port": $r.port, "password": $r.pass,
+                    "type": "hysteria2", "tag": ("in-" + ($p|tostring)), "listen": "::", "listen_port": $p, "password": $pass,
                     "tls": {
-                        "enabled": true, "server_name": $r.sni,
+                        "enabled": true, "server_name": $sni,
                         "certificates": [{"certificate":"/etc/sing-box/hy2.crt","key":"/etc/sing-box/hy2.key"}]
                     }
                 }]')
             else
-                json=$(echo "$json" | jq --argjson r "$row" \
-                '.inbounds += [{"type":"mixed","tag":("in-"+($r.port|tostring)),"listen":"::","listen_port":$r.port}] | 
-                .outbounds += [{"type":"hysteria2","tag":("out-"+($r.port|tostring)),"server":$r.ip,"server_port":$r.bp,"password":$r.pass,"tls":{"enabled":true,"server_name":$r.sni,"insecure":true}}] |
-                .route.rules += [{"inbound":[("in-"+($r.port|tostring)),"outbound":("out-"+($r.port|tostring))}]')
+                json=$(echo "$json" | jq --arg tag "$in_tag" --argjson p "$port" --arg ip "$(jq -r ".[$i].ip" "$RULES_JSON")" --argjson bp "$(jq -r ".[$i].bp" "$RULES_JSON")" --arg pass "$(jq -r ".[$i].pass" "$RULES_JSON")" --arg sni "$(jq -r ".[$i].sni" "$RULES_JSON")" \
+                '.inbounds += [{"type":"mixed","tag":$in_tag,"listen":"::","listen_port":$p}] | 
+                .outbounds += [{"type":"hysteria2","tag":$out_tag,"server":$ip,"server_port":$bp,"password":$pass,"tls":{"enabled":true,"server_name":$sni,"insecure":true}}]')
+                json=$(echo "$json" | jq --arg in "$in_tag" --arg out "$out_tag" '.route.rules += [{"inbound":[$in], "outbound":$out}]')
             fi
             
-        elif [ "$t" == "argo" ]; then
-            if [ "$m" == "standalone" ]; then
-                json=$(echo "$json" | jq --argjson r "$row" \
-                '.inbounds += [{"type":"vless","tag":("in-"+($r.port|tostring)),"listen":"::","listen_port":$r.port,"uuid":$r.uuid,"transport":{"type":"ws","path":$r.path}}]')
+        elif [ "$type" == "argo" ]; then
+            if [ "$mode" == "standalone" ]; then
+                json=$(echo "$json" | jq --argjson p "$port" --arg u "$(jq -r ".[$i].uuid" "$RULES_JSON")" --arg path "$(jq -r ".[$i].path" "$RULES_JSON")" \
+                '.inbounds += [{"type":"vless","tag":("in-"+($p|tostring)),"listen":"::","listen_port":$p,"uuid":$u,"transport":{"type":"ws","path":$path}}]')
             else
-                json=$(echo "$json" | jq --argjson r "$row" \
-                '.inbounds += [{"type":"mixed","tag":("in-"+($r.port|tostring)),"listen":"::","listen_port":$r.port}] | 
-                .outbounds += [{"type":"vless","tag":("out-"+($r.port|tostring)),"server":$r.ip,"server_port":$r.bp,"uuid":"00000000-0000-0000-0000-000000000000","transport":{"type":"ws","path":$r.path}}] |
-                .route.rules += [{"inbound":[("in-"+($r.port|tostring)),"outbound":("out-"+($r.port|tostring))}]')
+                json=$(echo "$json" | jq --arg tag "in-$p" --argjson p "$port" --arg ip "$(jq -r ".[$i].ip" "$RULES_JSON")" --argjson bp "$(jq -r ".[$i].bp" "$RULES_JSON")" --arg path "$(jq -r ".[$i].path" "$RULES_JSON")" \
+                '.inbounds += [{"type":"mixed","tag":"in-$p","listen":"::","listen_port":$p}] | 
+                .outbounds += [{"type":"vless","tag":"out-$p","server":$ip,"server_port":$bp,"uuid":"00000000-0000-0000-0000-000000000000","transport":{"type":"ws","path":$path}}])
+                json=$(echo "$json" | jq --arg in "in-$p" --arg out "out-$p" '.route.rules += [{"inbound":["in-$p"],"outbound":"out-$p"}]')
             fi
             
-        elif [ "$t" == "direct" ]; then
-            json=$(echo "$json" | jq --argjson r "$row" \
-            '.inbounds += [{"type":"direct","tag":("in-"+($r.port|tostring)),"listen":"::","listen_port":$r.port,"override_address":$r.ip,"override_port":$r.bp}]')
+        elif [ "$type" == "direct" ]; then
+            json=$(echo "$json" | jq --argjson p "$port" --arg ip "$(jq -r ".[$i].ip" "$RULES_JSON")" --arg bp "$(jq -r ".[$i].bp" "$RULES_JSON")" \
+                '.inbounds += [{"type":"direct","tag":"in-$p","listen":"::","listen_port":$p,"override_address":$ip,"override_port":$bp}]')
         fi
     done
     
@@ -374,7 +374,6 @@ apply_config() {
     systemctl restart sing-box
     sleep 1
     
-    # 真实状态诊断
     if systemctl is-active --quiet sing-box; then
         echo -e "${gl_lv}✅ 成功！服务已真实运行中！${gl_bai}"
     else
@@ -385,13 +384,14 @@ apply_config() {
 }
 
 # ============================================================================
-# 主循环入口 (铁壁循环，绝对不会意外退出)
+# 铁壁循环主菜单
 # ============================================================================
+
 main_menu() {
     check_env
     while true; do
         clear
-        local r="${gl_red}未安装/异常${gl_bai}" s="${gl_red}未运行${gl_bai}" b="${gl_red}未启用${gl_bai}"
+        local r="${gl_red}未安装${gl_bai}" s="${gl_red}未运行${gl_bai}" b="${gl_red}未启用${gl_bai}"
         if command -v sing-box >/dev/null 2>&1 || [ -f "/usr/local/bin/sing-box" ]; then
             r="${gl_lv}已安装 ✅${gl_bai}"
             if systemctl is-active --quiet sing-box 2>/dev/null; then s="${gl_lv}运行中 ✅${gl_bai}"; else s="${gl_red}未运行${gl_bai}"; fi
@@ -400,7 +400,7 @@ main_menu() {
         local n=$(jq 'length' "$RULES_JSON")
         
         echo -e "${gl_kjlan}========================================${gl_bai}"
-        echo -e "       Sing-Box 多协议节点管理脚本 (1.8+版)      "
+        echo -e "       Sing-Box 多协议节点管理脚本              "
         echo -e "========================================${gl_bai}"
         echo -e "核心状态: $r   |   运行状态: $s"
         echo -e "开机自启: $b   |   节点数量: ${gl_lv}${n}${gl_bai} 个"
@@ -410,10 +410,10 @@ main_menu() {
         echo -e "${gl_hui}3. 查看/删除节点${gl_bai}"
         echo -e "${gl_kjlan}4. 📋 查看一键导入链接${gl_bai}"
         echo -e "----------------------------------------"
-        echo -e "${gl_lv}5. 🧨 校验并应用配置 (启动服务) ★${gl_bai}"
+        echo -e "${gl_lv}5. 🧨 校验并启动服务 ★${gl_bai}"
         echo -e "${gl_hui}6. 停止服务${gl_bai}"
         echo -e "----------------------------------------"
-        echo -e "0. 退出脚本"
+        echo -e "0. 退出"
         echo -e "${gl_kjlan}========================================${gl_bai}"
         read -e -p "请输入选择: " c
         
