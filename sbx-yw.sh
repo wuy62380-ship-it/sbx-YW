@@ -14,8 +14,10 @@
 #   9. 端口限制解除 (仅提示, 不阻止添加)
 #  10. IP 获取多源容错
 #  11. 节点支持自定义备注名 (添加/查看/删除/链接全链路显示)
-#  12. 【终杀】所有 echo 强制加颜色，read 提示符内嵌选项说明
-#              (彻底解决 Web终端吞掉纯文本不显示的问题)
+#  12. 所有交互提示增加高亮色，read 提示符内嵌选项说明
+#  13. 【终杀】select_sni() 所有 echo 加 >&2，彻底杜绝 $() 抓取菜单污染 SNI
+#  14. 【终杀】get_public_ip() 严格正则校验，杜绝返回空值或 HTML 污染
+#  15. 【终杀】view_links() IP 为空时强制要求手动输入，杜绝生成 @:2054 残缺链接
 # ============================================================================
 
 set -u
@@ -78,11 +80,16 @@ check_env() {
 # ============================================================================
 url_encode() { echo -n "$1" | jq -sRr @uri; }
 
+# 【修复】严格正则校验，获取失败返回空字符串
 get_public_ip() {
-    curl -s --connect-timeout 3 ipinfo.io/ip 2>/dev/null \
-        || curl -s --connect-timeout 3 ifconfig.me 2>/dev/null \
-        || curl -s --connect-timeout 3 ip.sb 2>/dev/null \
-        || echo "YOUR_SERVER_IP"
+    local tmp_ip
+    tmp_ip=$(curl -s --connect-timeout 3 ipinfo.io/ip 2>/dev/null)
+    [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
+    tmp_ip=$(curl -s --connect-timeout 3 ifconfig.me 2>/dev/null)
+    [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
+    tmp_ip=$(curl -s --connect-timeout 3 ip.sb 2>/dev/null)
+    [[ "$tmp_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && echo "$tmp_ip" && return
+    echo ""
 }
 
 get_sb_version() {
@@ -108,7 +115,7 @@ safe_write_rules() {
 }
 
 # ============================================================================
-# SNI 选择 (终杀版: 双重保险)
+# 【修复】SNI 选择 (所有 echo 加 >&2，彻底杜绝 $() 捕获菜单文字污染)
 # ============================================================================
 select_sni() {
     echo -e "${gl_huang}--- 伪装域名 (SNI) 设置 ---${gl_bai}" >&2
@@ -117,7 +124,7 @@ select_sni() {
     echo -e "${gl_lv}3. 手动输入域名${gl_bai}" >&2
     read -e -p "$(echo -e "${gl_cyan}请选择 (1默认 / 2优选 / 3手动): ${gl_bai}")" c
     case $c in
-        1) echo "www.microsoft.com" ;;   # 注意这行不要加 >&2
+        1) echo "www.microsoft.com" ;;
         2)
             echo -e "${gl_huang}[测试中]...${gl_bai}" >&2
             local d="www.microsoft.com" t=9999
@@ -127,13 +134,13 @@ select_sni() {
                 [ -n "$n" ] && [ "$n" -lt "$t" ] && t=$n d=$i
             done
             echo -e "${gl_lv}选用: $d (${t}ms)${gl_bai}" >&2
-            echo "$d"   # 注意这行不要加 >&2
+            echo "$d"
             ;;
         3) 
             read -e -p "$(echo -e "${gl_cyan}输入域名: ${gl_bai}")" s
-            echo "${s:-www.microsoft.com}"   # 注意这行不要加 >&2
+            echo "${s:-www.microsoft.com}" 
             ;;
-        *) echo "www.microsoft.com" ;;   # 注意这行不要加 >&2
+        *) echo "www.microsoft.com" ;;
     esac
 }
 
@@ -208,7 +215,6 @@ add_reality() {
     echo -e "${gl_huang}>>> 请选择工作模式 <<<${gl_bai}"
     echo -e "${gl_lv}1. 本机直接落地 (全自动生成) ★推荐${gl_bai}"
     echo -e "${gl_hui}2. 中转到其他机器${gl_bai}"
-    # 【关键】选项写进 read
     read -e -p "$(echo -e "${gl_cyan}请选择 (1落地 / 2中转): ${gl_bai}")" m
 
     if [ "$m" == "1" ]; then
@@ -392,12 +398,22 @@ view_nodes() {
 }
 
 # ============================================================================
-# 查看一键导入链接
+# 【修复】查看一键导入链接 (IP 为空强制手动输入)
 # ============================================================================
 view_links() {
     > "$LINKS_FILE"
     local ip has=0
     ip=$(get_public_ip)
+    # 如果自动获取失败或格式不对，强制手动输入
+    if [[ -z "$ip" ]] || ! [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo -e "${gl_red}自动获取公网IP失败！${gl_bai}"
+        read -e -p "$(echo -e "${gl_cyan}请手动输入服务器IP: ${gl_bai}")" ip
+        if ! [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo -e "${gl_red}IP格式错误，无法生成链接${gl_bai}"
+            read -rs -n 1 -p "按任意键返回..."
+            return
+        fi
+    fi
 
     echo -e "${gl_kjlan}========================================${gl_bai}"
     echo -e "       客户端一键导入链接 (实时生成)       "
