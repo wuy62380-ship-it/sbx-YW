@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================================
 # 极致中转一键部署脚本
-# 架构：kernel-smart.sh (魔改BBRv3底层调优) + iptables (内核态零损耗转发)
+# 架构：kernel-smart.sh (魔改内核调优) + iptables (内核态零损耗转发)
 # 使用：仅在【中转机】上运行
 # ============================================================================
 
-# 颜色定义
+# 清除可能存在的 Windows 换行符
+if [ -f "$0" ]; then sed -i 's/\r$//' "$0" 2>/dev/null; fi
+
 gl_bai="\033[0m"
 gl_lv="\033[32m"
 gl_huang="\033[33m"
@@ -14,7 +16,6 @@ gl_red="\033[31m"
 gl_cyan="\033[36m"
 gl_bright="\033[97m"
 
-# 检查 root 权限
 [[ "$EUID" -ne 0 ]] && echo -e "${gl_red}❌ 请使用 root 运行此脚本${gl_bai}" && exit 1
 
 clear
@@ -40,9 +41,11 @@ if ! curl -fsSL --connect-timeout 10 "$KERNEL_SCRIPT_URL" -o "$TMP_SCRIPT"; then
     echo -e "${gl_red}❌ 下载 kernel-smart.sh 失败！${gl_bai}"
     echo -e "${gl_huang}可能是网络问题或 GitHub 被墙。${gl_bai}"
     read -e -p "$(echo -e "${gl_cyan}是否跳过内核调优，仅配置 iptables 转发？
-echo -e "${gl_hui}----------------------------------------${gl_bai}"
+    if [ "$SKIP_KERNEL" == "y" ]; then
+        echo -e "${gl_hui}----------------------------------------${gl_bai}"
     else
-        echo -e "${gl_hui}已取消部署。${gl_bai}"; exit 1
+        echo -e "${gl_hui}已取消部署。${gl_bai}"
+        exit 1
     fi
 else
     chmod +x "$TMP_SCRIPT"
@@ -62,7 +65,7 @@ fi
 # ============================================================================
 echo -e "\n${gl_cyan}[2/3] 配置 iptables 内核态高透转发...${gl_bai}"
 
-# 确保内核 IP 转发开启（无论 kernel-smart.sh 有没有开，这里强制保底）
+# 确保内核 IP 转发开启
 if ! grep -q "^net.ipv4.ip_forward.*=.*1" /etc/sysctl.conf /etc/sysctl.d/* 2>/dev/null; then
     echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
     sysctl -p > /dev/null 2>&1
@@ -92,7 +95,6 @@ if iptables -t nat -C PREROUTING -p tcp --dport "$FRONTEND_PORT" -j DNAT --to-de
     echo -e "${gl_huang}⚠️ 检测到端口 $FRONTEND_PORT 的转发规则已存在！${gl_bai}"
     read -e -p "$(echo -e "${gl_cyan}是否覆盖/跳过？
     if [ "$OVERWRITE" != "y" ]; then echo -e "${gl_hui}已跳过。${gl_bai}"; exit 0; fi
-    # 删除旧规则
     iptables -t nat -D PREROUTING -p tcp --dport "$FRONTEND_PORT" -j DNAT --to-destination "$BACKEND_IP:$BACKEND_PORT" 2>/dev/null
     echo -e "${gl_hui}已清理旧规则。${gl_bai}"
 fi
@@ -100,7 +102,7 @@ fi
 # 添加 DNAT 规则 (入站改写目的地址，实现转发)
 iptables -t nat -A PREROUTING -p tcp --dport "$FRONTEND_PORT" -j DNAT --to-destination "$BACKEND_IP:$BACKEND_PORT"
 
-# 添加精准 SNAT 规则 (仅对发往落地机的流量伪装源IP，确保回程正确，不搞乱中转机全局网络)
+# 添加精准 SNAT 规则 (仅对发往落地机的流量伪装源IP)
 if ! iptables -t nat -C POSTROUTING -d "$BACKEND_IP" -j MASQUERADE 2>/dev/null; then
     iptables -t nat -A POSTROUTING -d "$BACKEND_IP" -j MASQUERADE
 fi
@@ -118,7 +120,6 @@ if command -v netfilter-persistent >/dev/null 2>&1; then
 elif [ -f /etc/redhat-release ] && command -v iptables-service >/dev/null 2>&1; then
     service iptables save > /dev/null 2>&1 && SAVE_SUCCESS=1
 else
-    # 尝试手动保存
     mkdir -p /etc/iptables
     iptables-save > /etc/iptables/rules.v4 2>/dev/null && SAVE_SUCCESS=1
 fi
