@@ -64,13 +64,13 @@ add_rule() {
 del_rule() {
     echo -e "${C}--- 删除内核态转发规则 ---${R}"
     
-    # 使用 iptables-save 稳定提取规则
+    # 使用 awk 提取，完美兼容所有 Linux 版本
     rules=()
     while IFS= read -r line; do
         if [[ -n "$line" ]]; then
             rules+=("$line")
         fi
-    done < <(iptables-save -t nat | grep "PREROUTING" | grep "DNAT")
+    done < <(iptables-save -t nat | awk '/PREROUTING/ && /DNAT/')
 
     if [ ${#rules[@]} -eq 0 ]; then
         echo -e "${H}当前没有任何转发规则。${R}"
@@ -82,8 +82,9 @@ del_rule() {
     declare -A port_map
     declare -A dest_map
     for rule in "${rules[@]}"; do
-        port=$(echo "$rule" | grep -oP '--dport \K\d+')
-        dest=$(echo "$rule" | grep -oP '--to-destination \K[^ ]+')
+        # 使用 awk 精准提取 --dport 和 --to-destination 后面的值
+        port=$(echo "$rule" | awk '{for(i=1;i<=NF;i++) if($i=="--dport") print $(i+1)}')
+        dest=$(echo "$rule" | awk '{for(i=1;i<=NF;i++) if($i=="--to-destination") print $(i+1)}')
         port_map[$idx]="$port"
         dest_map[$idx]="$dest"
         echo -e "${G}[$idx]${R} 监听端口: ${B}$port${R}  ->  落地目标: ${B}$dest${R}"
@@ -103,7 +104,7 @@ del_rule() {
 
     iptables -t nat -D PREROUTING -p tcp --dport "$del_port" -j DNAT --to-destination "$del_dest" 2>/dev/null
     
-    # 检查该落地IP是否还有其他规则在用，没用就清理 MASQUERADE
+    # 检查该落地IP是否还有其他规则在用，没用就清理回程路由
     if ! iptables-save -t nat | grep "PREROUTING" | grep -q "$del_dest"; then
         iptables -t nat -D POSTROUTING -d "${del_dest%%:*}" -j MASQUERADE 2>/dev/null
     fi
