@@ -126,7 +126,8 @@ else
     echo -e "${H}CentOS/RedHat: yum install iptables-services -y${R}"
 fi
 
-MYIP=$(curl -s --connect-timeout 3 https://ifconfig.me 2>/dev/null || curl -s --connect-timeout 3 https://checkip.amazonaws.com 2>/dev/null)
+# 强制使用 IPv4 获取公网 IP，避免获取到 IPv6 地址
+MYIP=$(curl -4 -s --connect-timeout 3 https://ifconfig.me 2>/dev/null || curl -4 -s --connect-timeout 3 https://checkip.amazonaws.com 2>/dev/null || curl -4 -s --connect-timeout 3 https://api.ipify.org 2>/dev/null)
 
 echo ""
 echo -e "${G}========================================${R}"
