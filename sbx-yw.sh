@@ -14,14 +14,12 @@ B="\033[97m"
 
 [ "$(id -u)" -ne 0 ] && echo -e "${RED}请使用 root 运行${R}" && exit 1
 
-# 强制使用 IPv4 获取公网 IP
 get_my_ip() {
     local ip
     ip=$(curl -4 -s --connect-timeout 3 https://ifconfig.me 2>/dev/null || curl -4 -s --connect-timeout 3 https://checkip.amazonaws.com 2>/dev/null || curl -4 -s --connect-timeout 3 https://api.ipify.org 2>/dev/null)
     echo "${ip:-未知IP}"
 }
 
-# 添加转发规则
 add_rule() {
     echo -e "${C}--- 添加内核态转发规则 ---${R}"
     
@@ -60,11 +58,9 @@ add_rule() {
     echo -e "${G}✅ 转发规则添加成功：${C}$(get_my_ip):${FRONTEND_PORT} -> ${BACKEND_IP}:${BACKEND_PORT}${R}"
 }
 
-# 删除转发规则
 del_rule() {
     echo -e "${C}--- 删除内核态转发规则 ---${R}"
     
-    # 使用 awk 提取，完美兼容所有 Linux 版本
     rules=()
     while IFS= read -r line; do
         if [[ -n "$line" ]]; then
@@ -82,7 +78,6 @@ del_rule() {
     declare -A port_map
     declare -A dest_map
     for rule in "${rules[@]}"; do
-        # 使用 awk 精准提取 --dport 和 --to-destination 后面的值
         port=$(echo "$rule" | awk '{for(i=1;i<=NF;i++) if($i=="--dport") print $(i+1)}')
         dest=$(echo "$rule" | awk '{for(i=1;i<=NF;i++) if($i=="--to-destination") print $(i+1)}')
         port_map[$idx]="$port"
@@ -104,7 +99,6 @@ del_rule() {
 
     iptables -t nat -D PREROUTING -p tcp --dport "$del_port" -j DNAT --to-destination "$del_dest" 2>/dev/null
     
-    # 检查该落地IP是否还有其他规则在用，没用就清理回程路由
     if ! iptables-save -t nat | grep "PREROUTING" | grep -q "$del_dest"; then
         iptables -t nat -D POSTROUTING -d "${del_dest%%:*}" -j MASQUERADE 2>/dev/null
     fi
@@ -113,14 +107,37 @@ del_rule() {
     echo -e "${G}✅ 已成功删除端口 ${del_port} 的转发规则！${R}"
 }
 
-# 查看转发规则
+# 查看转发规则 (人性化格式)
 view_rules() {
-    echo -e "${C}--- 当前 NAT 转发规则表 ---${R}"
-    iptables -t nat -L PREROUTING -n --line-numbers | grep -E "Chain|DNAT|num" 
+    echo -e "${C}--- 当前中转转发规则清单 ---${R}"
+    
+    rules=()
+    while IFS= read -r line; do
+        if [[ -n "$line" ]]; then
+            rules+=("$line")
+        fi
+    done < <(iptables-save -t nat | awk '/PREROUTING/ && /DNAT/')
+
+    if [ ${#rules[@]} -eq 0 ]; then
+        echo -e "${H}当前没有任何转发规则，是一片净土。${R}"
+        return
+    fi
+
+    local my_ip
+    my_ip=$(get_my_ip)
+    local idx=1
+    
+    for rule in "${rules[@]}"; do
+        port=$(echo "$rule" | awk '{for(i=1;i<=NF;i++) if($i=="--dport") print $(i+1)}')
+        dest=$(echo "$rule" | awk '{for(i=1;i<=NF;i++) if($i=="--to-destination") print $(i+1)}')
+        
+        echo -e "${G}[$idx]${R} ${C}客户端连接${R} -> ${B}${my_ip}:${port}${R} ${C}实际转发至${R} -> ${B}${dest}${R}"
+        ((idx++))
+    done
     echo -e "${H}----------------------------------------${R}"
+    echo -e "${H}客户端链接生成方法：复制落地机链接，将 IP 改为 ${my_ip}，端口改为上方对应的监听端口${R}"
 }
 
-# 持久化规则
 save_rules() {
     if command -v netfilter-persistent >/dev/null 2>&1; then
         netfilter-persistent save > /dev/null 2>&1
@@ -132,7 +149,6 @@ save_rules() {
     fi
 }
 
-# 内核调优
 run_kernel_tune() {
     echo -e "${C}正在拉取 kernel-smart.sh 魔改内核脚本...${R}"
     URL="https://raw.githubusercontent.com/wuy62380-ship-it/yw/main/kernel-smart.sh"
@@ -152,7 +168,6 @@ run_kernel_tune() {
     read -rs -n 1 -p "按任意键返回..."
 }
 
-# 确保转发开启
 ensure_forward() {
     if ! grep -q "^net.ipv4.ip_forward.*=.*1" /etc/sysctl.conf 2>/dev/null; then
         echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
@@ -160,7 +175,6 @@ ensure_forward() {
     fi
 }
 
-# 主菜单
 ensure_forward
 
 while true; do
