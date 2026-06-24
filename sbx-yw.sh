@@ -151,7 +151,7 @@ save_rules() {
 
 run_kernel_tune() {
     echo -e "${C}正在拉取 kernel-smart.sh 魔改内核脚本...${R}"
-    URL="https://raw.githubusercontent.com/wuy62380-ship-it/yw/main/kernel-smart.sh)"
+    URL="https://raw.githubusercontent.com/wuy62380-ship-it/yw/main/kernel-smart.sh"
     FILE="/tmp/kernel-smart.sh"
 
     if ! curl -fsSL --connect-timeout 10 "$URL" -o "$FILE"; then
