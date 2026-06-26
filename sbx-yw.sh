@@ -175,7 +175,16 @@ ensure_forward() {
     fi
 }
 
+# 【防坑补丁】直连推流/游戏必加：防止跨网段 MTU 不一致导致数据包被静默丢弃
+ensure_mss_clamp() {
+    if ! iptables -t mangle -C FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; then
+        iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+        save_rules
+    fi
+}
+
 ensure_forward
+ensure_mss_clamp
 
 while true; do
     clear
